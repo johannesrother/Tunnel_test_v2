@@ -1,0 +1,375 @@
+:root {
+  color-scheme: dark;
+  --ink: #172119;
+  --forest: #263528;
+  --gold: #dfc574;
+  --sky: #b9d2d0;
+  --bone: #f2ecd9;
+  --muted: rgba(242, 236, 217, 0.66);
+  --rule: rgba(223, 197, 116, 0.38);
+  --pad: clamp(20px, 3.2vw, 52px);
+  --mono: "SFMono-Regular", "Roboto Mono", "Courier New", monospace;
+  --sans: "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--ink);
+}
+
+body {
+  color: var(--bone);
+  font-family: var(--mono);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+#experience,
+#stage,
+#stage canvas {
+  position: fixed;
+  inset: 0;
+}
+
+#stage canvas {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+}
+
+#stage canvas:active {
+  cursor: grabbing;
+}
+
+#experience::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(10, 20, 13, 0.2), transparent 28%, transparent 74%, rgba(10, 20, 13, 0.32)),
+    radial-gradient(circle at center, transparent 46%, rgba(12, 25, 15, 0.32) 100%);
+}
+
+.masthead,
+.instruction,
+.advisory,
+.status,
+.reticle,
+.boot-message,
+.start-button,
+.end-screen,
+.flash-layer {
+  position: fixed;
+  z-index: 2;
+}
+
+.boot-message {
+  top: 50%;
+  left: 50%;
+  margin: 42px 0 0;
+  color: var(--muted);
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.boot-message.is-error {
+  width: min(460px, calc(100vw - 48px));
+  color: var(--gold);
+  line-height: 1.7;
+}
+
+.boot-message[hidden] {
+  display: none;
+}
+
+.masthead {
+  top: var(--pad);
+  left: var(--pad);
+  right: var(--pad);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.title-block {
+  padding-left: 0;
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: clamp(1rem, 1.3vw, 1.45rem);
+  font-stretch: condensed;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  line-height: 0.95;
+}
+
+.title-block p {
+  margin: 15px 0 0;
+  color: var(--gold);
+  font-size: clamp(0.58rem, 0.75vw, 0.72rem);
+  letter-spacing: 0.2em;
+}
+
+.vr-button {
+  min-width: 142px;
+  padding: 7px 2px 10px;
+  color: var(--bone);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--gold);
+  font-size: 0.82rem;
+  letter-spacing: 0.23em;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.vr-button:hover,
+.vr-button:focus-visible {
+  color: var(--gold);
+  border-color: var(--bone);
+  outline: none;
+}
+
+.vr-button:disabled {
+  color: var(--muted);
+  border-color: var(--rule);
+  cursor: default;
+}
+
+.instruction {
+  right: var(--pad);
+  bottom: calc(var(--pad) + 2px);
+  margin: 0;
+  color: var(--bone);
+  font-size: 0.68rem;
+  letter-spacing: 0.13em;
+}
+
+.advisory {
+  left: 50%;
+  bottom: clamp(132px, 17vh, 185px);
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.56rem;
+  letter-spacing: 0.2em;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.status {
+  top: calc(var(--pad) + 58px);
+  right: var(--pad);
+  max-width: 240px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.58rem;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.reticle {
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(238, 232, 223, 0.78);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.reticle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: var(--bone);
+  transform: translate(-50%, -50%);
+}
+
+.start-button {
+  left: 50%;
+  bottom: clamp(170px, 21vh, 230px);
+  width: min(370px, calc(100vw - 48px));
+  padding: 14px 10px 16px;
+  color: var(--bone);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--gold);
+  font-family: var(--mono);
+  font-size: clamp(0.72rem, 1.2vw, 1rem);
+  letter-spacing: 0.22em;
+  transform: translateX(-50%);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 180ms ease, border-color 180ms ease, opacity 180ms ease;
+}
+
+.start-button:hover,
+.start-button:focus-visible,
+.end-screen button:hover,
+.end-screen button:focus-visible {
+  color: var(--gold);
+  border-color: var(--bone);
+  outline: none;
+}
+
+.flash-layer {
+  inset: 0;
+  z-index: 8;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.end-screen {
+  inset: 0;
+  z-index: 9;
+  place-items: center;
+  align-content: center;
+  gap: 34px;
+  color: #3d3d3d;
+  background: #fff;
+}
+
+.end-screen[hidden] {
+  display: none;
+}
+
+.end-screen:not([hidden]) {
+  display: grid;
+}
+
+.end-screen p {
+  margin: 0;
+  font-size: clamp(1rem, 1.6vw, 1.35rem);
+  letter-spacing: 0.34em;
+}
+
+.end-screen button {
+  min-width: 190px;
+  padding: 12px 6px;
+  color: #555;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #999;
+  font-size: 0.68rem;
+  letter-spacing: 0.24em;
+  cursor: pointer;
+}
+
+body.is-running .start-button,
+body.is-running .advisory,
+body.is-running .instruction {
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.is-white-room {
+  color: #8b8b8b;
+}
+
+body.is-white-room #experience::after {
+  opacity: 0;
+}
+
+body.is-white-room .title-block p,
+body.is-white-room .vr-button {
+  color: #8b8b8b;
+  border-color: #bbb;
+}
+
+body.is-white-room .reticle {
+  border-color: rgba(90, 90, 90, 0.34);
+}
+
+body.is-white-room .reticle::after {
+  background: rgba(90, 90, 90, 0.5);
+}
+
+noscript {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: var(--ink);
+  color: var(--bone);
+}
+
+@media (max-width: 700px) {
+  .masthead {
+    align-items: flex-start;
+  }
+
+  .title-block {
+    padding-left: 0;
+  }
+
+  h1 {
+    max-width: 190px;
+    font-size: 0.92rem;
+    line-height: 1.12;
+  }
+
+  .title-block p {
+    margin-top: 7px;
+    font-size: 0.54rem;
+  }
+
+  .start-button {
+    bottom: 110px;
+    width: min(290px, calc(100vw - 48px));
+    font-size: 0.68rem;
+  }
+
+  .vr-button {
+    min-width: 104px;
+    font-size: 0.64rem;
+  }
+
+  .instruction {
+    right: auto;
+    left: var(--pad);
+    font-size: 0.6rem;
+  }
+
+  .advisory {
+    bottom: 78px;
+    font-size: 0.49rem;
+  }
+
+  .reticle {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vr-button {
+    transition: none;
+  }
+}

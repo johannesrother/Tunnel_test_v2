@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#172119" />
+    <meta
+      name="description"
+      content="Immersive WebXR-Reise durch die Phasen einer Panikattacke."
+    />
+    <title>Panic Journey</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      window.addEventListener("error", function (event) {
+        var message = document.querySelector("#boot-message");
+        if (!message) return;
+        message.hidden = false;
+        message.classList.add("is-error");
+        message.textContent = "WebGL konnte nicht gestartet werden. Browser neu laden oder Hardwarebeschleunigung aktivieren.";
+      });
+      window.addEventListener("unhandledrejection", function () {
+        window.dispatchEvent(new Event("error"));
+      });
+    </script>
+  </head>
+  <body>
+    <main id="experience" aria-label="Interaktiver organischer Tunnel">
+      <div id="stage" aria-hidden="true"></div>
+      <p id="boot-message" class="boot-message" role="status">TUNNEL WIRD GELADEN</p>
+
+      <header class="masthead">
+        <div class="title-block">
+          <h1>PANIC JOURNEY</h1>
+          <p id="stage-label">01 / CALM</p>
+        </div>
+        <button id="vr-button" class="vr-button" type="button">ENTER VR</button>
+      </header>
+
+      <div class="reticle" aria-hidden="true"></div>
+
+      <button id="start-button" class="start-button" type="button">
+        BEGIN JOURNEY
+      </button>
+      <p class="advisory">60 SEC · SOUND · FLASHING LIGHT</p>
+      <p class="instruction">drag to look · the path is set</p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <div id="flash-layer" class="flash-layer" aria-hidden="true"></div>
+      <section id="end-screen" class="end-screen" hidden>
+        <p>THE END</p>
+        <button id="restart-button" type="button">RESTART</button>
+      </section>
+    </main>
+
+    <noscript>JavaScript wird für diese WebXR-Demo benötigt.</noscript>
+    <script defer src="./bundle.js?v=10"></script>
+  </body>
+</html>
