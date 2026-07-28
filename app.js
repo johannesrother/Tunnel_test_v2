@@ -146,12 +146,12 @@ whiteRoom.visible = false;
 scene.add(whiteRoom);
 
 const paradise = new THREE.Group();
-const sky = new THREE.Mesh(new THREE.SphereGeometry(90, 48, 32), new THREE.ShaderMaterial({
-  side: THREE.BackSide,
-  uniforms: { uTime: { value: 0 } },
-  vertexShader: "varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
-  fragmentShader: "uniform float uTime;varying vec3 vP;float n(vec2 p){return fract(sin(dot(p,vec2(41.7,289.1)))*43758.5);}void main(){vec3 d=normalize(vP);float h=smoothstep(-.5,.7,d.y);vec3 horizon=mix(vec3(.16,.42,.35),vec3(.68,.88,1.),h);float cloud=smoothstep(.78,.92,sin(d.x*16.+d.z*12.+uTime*.045)*.5+.5)*smoothstep(.02,.5,d.y);gl_FragColor=vec4(mix(horizon,vec3(1.,.98,.88),cloud*.42),1.);}"
-}));
+const paradiseTexture = new THREE.TextureLoader().load("./paradise-valley-360.png");
+paradiseTexture.colorSpace = THREE.SRGBColorSpace;
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(90, 80, 48),
+  new THREE.MeshBasicMaterial({ map: paradiseTexture, side: THREE.BackSide })
+);
 const meadow = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), new THREE.MeshLambertMaterial({ color: 0x5caf4b }));
 meadow.rotation.x = -Math.PI / 2; meadow.position.y = -48; meadow.visible = false;
 const sun = new THREE.Mesh(new THREE.SphereGeometry(5, 24, 16), new THREE.MeshBasicMaterial({ color: 0xfff0a8 }));
@@ -162,7 +162,7 @@ const warmLight = new THREE.DirectionalLight(0xffe8af, 2.5); warmLight.position.
 [[-15,-15,1.3],[12,-18,1.55],[22,-30,1.1],[-27,-31,1.8],[5,-34,.95]].forEach(([x,z,s])=>{const tree=new THREE.Group();const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.14*s,.2*s,2.2*s,8),new THREE.MeshLambertMaterial({color:0x6a4526}));trunk.position.y=-1.7+1.1*s;const crown=new THREE.Mesh(new THREE.ConeGeometry(1.15*s,3.6*s,10),new THREE.MeshLambertMaterial({color:0x28733a}));crown.position.y=-1.7+3*s;tree.add(trunk,crown);tree.position.set(x,0,z);paradise.add(tree);});
 const birds = new THREE.Group(); const birdFlights = [];
 function addBird(x,y,z,size,speed){const bird=new THREE.Group(),mat=new THREE.LineBasicMaterial({color:0x173f2a});bird.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-size,0,0),new THREE.Vector3(0,size*.35,0)]),mat),new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,size*.35,0),new THREE.Vector3(size,0,0)]),mat));bird.position.set(x,y,z);birds.add(bird);birdFlights.push({bird,x,y,speed,phase:Math.random()*Math.PI*2});}
-addBird(-5,8,-20,.72,.9);addBird(4,10,-28,.52,1.2);addBird(13,7,-24,.44,.75);paradise.add(birds);paradise.visible=true;scene.add(paradise);
+addBird(-5,8,-20,.72,.9);addBird(4,10,-28,.52,1.2);addBird(13,7,-24,.44,.75);paradise.add(birds);paradise.children.forEach((child)=>{if(child!==sky)child.visible=false;});paradise.visible=true;scene.add(paradise);
 
 const clock = new THREE.Clock();
 let previousElapsed = 0;
@@ -355,7 +355,7 @@ function beginTunnel(elapsed) {
 }
 function updateParadise(elapsed) {
   const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-4,PRELUDE_DURATION), surge=1-Math.pow(1-pull,3);
-  camera.position.z=11-surge*21;camera.position.y=Math.sin(t*.45)*.12*(1-pull); sky.material.uniforms.uTime.value=elapsed;
+  camera.position.z=11-surge*21;camera.position.y=Math.sin(t*.45)*.12*(1-pull);
   birdFlights.forEach(f=>{f.bird.position.x=f.x+Math.sin(t*f.speed+f.phase)*4;f.bird.position.y=f.y+Math.sin(t*f.speed*2+f.phase)*.7;f.bird.rotation.z=Math.sin(t*f.speed*2+f.phase)*.28;});
   if(pull>0){tunnel.visible=true;portal.visible=true;particles.visible=true;tunnel.scale.setScalar(.035+surge*.965);tunnel.position.z=-105+surge*67;portal.scale.setScalar(.025+surge*.975);portal.position.z=tunnel.position.z-57;tunnelMaterial.uniforms.uDistress.value=surge*.2;tunnelMaterial.uniforms.uChaos.value=surge*.12;tunnelMaterial.uniforms.uFlow.value=.4+surge*4.4;particles.rotation.z+=surge*.045;paradise.position.z=surge*18;paradise.rotation.y=Math.sin(t*.4)*.025*(1-pull);}
   if(t>=PRELUDE_DURATION) beginTunnel(elapsed);
