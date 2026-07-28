@@ -150,7 +150,7 @@ const paradiseTexture = new THREE.TextureLoader().load("./paradise-valley-360.pn
 paradiseTexture.colorSpace = THREE.SRGBColorSpace;
 const sky = new THREE.Mesh(
   new THREE.SphereGeometry(90, 80, 48),
-  new THREE.MeshBasicMaterial({ map: paradiseTexture, side: THREE.BackSide })
+  new THREE.MeshBasicMaterial({ map: paradiseTexture, side: THREE.BackSide, transparent: true, opacity: 1, depthWrite: false })
 );
 const meadow = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), new THREE.MeshLambertMaterial({ color: 0x5caf4b }));
 meadow.rotation.x = -Math.PI / 2; meadow.position.y = -48; meadow.visible = false;
@@ -339,7 +339,7 @@ function resetExperience() {
   document.querySelector(".advisory").textContent = "10 SEC · SPATIAL BIRDSONG · ACCELERATION";
   document.body.classList.remove("is-running", "is-white-room");
   paradise.visible = true; tunnel.visible = false; portal.visible = false; particles.visible = false; whiteRoom.visible = false;
-  scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11);
+  scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11); paradise.position.set(0,0,0); paradise.rotation.set(0,0,0); sky.material.opacity = 1;
   if (audioContext) { const now=audioContext.currentTime; masterGain.gain.cancelScheduledValues(now); masterGain.gain.exponentialRampToValueAtTime(.0001,now+.25); }
 }
 async function startJourney() {
@@ -354,7 +354,7 @@ function beginTunnel(elapsed) {
   journeyRunning=true;journeyFinished=false;currentPhase=-1;drift=0;journeyStartedAt=elapsed;applyPhase(0,0);
 }
 function updateParadise(elapsed) {
-  const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-4,PRELUDE_DURATION), surge=1-Math.pow(1-pull,3);
+  const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-4,PRELUDE_DURATION), surge=pull*pull*(3-2*pull), fade=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-2.8,PRELUDE_DURATION); sky.material.opacity=1-fade;
   camera.position.z=11-surge*21;camera.position.y=Math.sin(t*.45)*.12*(1-pull);
   birdFlights.forEach(f=>{f.bird.position.x=f.x+Math.sin(t*f.speed+f.phase)*4;f.bird.position.y=f.y+Math.sin(t*f.speed*2+f.phase)*.7;f.bird.rotation.z=Math.sin(t*f.speed*2+f.phase)*.28;});
   if(pull>0){tunnel.visible=true;portal.visible=true;particles.visible=true;tunnel.scale.setScalar(.035+surge*.965);tunnel.position.z=-105+surge*67;portal.scale.setScalar(.025+surge*.975);portal.position.z=tunnel.position.z-57;tunnelMaterial.uniforms.uDistress.value=surge*.2;tunnelMaterial.uniforms.uChaos.value=surge*.12;tunnelMaterial.uniforms.uFlow.value=.4+surge*4.4;particles.rotation.z+=surge*.045;paradise.position.z=surge*18;paradise.rotation.y=Math.sin(t*.4)*.025*(1-pull);}
