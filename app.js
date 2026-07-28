@@ -13,6 +13,7 @@ const endScreen = document.querySelector("#end-screen");
 const TEST_MODE = new URLSearchParams(window.location.search).has("test");
 const CLOCK_RATE = TEST_MODE ? 10 : 1;
 const JOURNEY_DURATION = 60;
+const PRELUDE_DURATION = TEST_MODE ? 2.2 : 15;
 const phases = [
   { start: 0, label: "01 / CALM", distress: 0, chaos: 0, scale: 1, speed: 0.36 },
   { start: 8, label: "02 / UNEASE", distress: 0.28, chaos: 0.24, scale: 0.84, speed: 0.65 },
@@ -144,10 +145,25 @@ const whiteRoom = new THREE.Mesh(new THREE.SphereGeometry(42, 32, 20), whiteRoom
 whiteRoom.visible = false;
 scene.add(whiteRoom);
 
+const paradise = new THREE.Group();
+const sky = new THREE.Mesh(new THREE.SphereGeometry(90, 32, 20), new THREE.MeshBasicMaterial({ color: 0x91d9ff, side: THREE.BackSide }));
+const meadow = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), new THREE.MeshLambertMaterial({ color: 0x5caf4b }));
+meadow.rotation.x = -Math.PI / 2; meadow.position.y = -1.7;
+const sun = new THREE.Mesh(new THREE.SphereGeometry(5, 24, 16), new THREE.MeshBasicMaterial({ color: 0xfff0a8 }));
+sun.position.set(-20, 17, -42);
+paradise.add(sky, meadow, sun, new THREE.HemisphereLight(0xdff5ff, 0x4d8d43, 2.2));
+const warmLight = new THREE.DirectionalLight(0xffe8af, 2.5); warmLight.position.set(-12, 18, 6); paradise.add(warmLight);
+[[-25,-1.7,-42,15],[-7,-1.7,-47,18],[15,-1.7,-43,15],[30,-1.7,-51,19]].forEach(([x,y,z,s],i)=>{const hill=new THREE.Mesh(new THREE.ConeGeometry(s,s*.8,28),new THREE.MeshLambertMaterial({color:i%2?0x438d43:0x347c39}));hill.position.set(x,y+s*.34,z);paradise.add(hill);});
+[[-15,-15,1.3],[12,-18,1.55],[22,-30,1.1],[-27,-31,1.8],[5,-34,.95]].forEach(([x,z,s])=>{const tree=new THREE.Group();const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.14*s,.2*s,2.2*s,8),new THREE.MeshLambertMaterial({color:0x6a4526}));trunk.position.y=-1.7+1.1*s;const crown=new THREE.Mesh(new THREE.ConeGeometry(1.15*s,3.6*s,10),new THREE.MeshLambertMaterial({color:0x28733a}));crown.position.y=-1.7+3*s;tree.add(trunk,crown);tree.position.set(x,0,z);paradise.add(tree);});
+const birds = new THREE.Group(); const birdFlights = [];
+function addBird(x,y,z,size,speed){const bird=new THREE.Group(),mat=new THREE.LineBasicMaterial({color:0x173f2a});bird.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-size,0,0),new THREE.Vector3(0,size*.35,0)]),mat),new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,size*.35,0),new THREE.Vector3(size,0,0)]),mat));bird.position.set(x,y,z);birds.add(bird);birdFlights.push({bird,x,y,speed,phase:Math.random()*Math.PI*2});}
+addBird(-5,8,-20,.72,.9);addBird(4,10,-28,.52,1.2);addBird(13,7,-24,.44,.75);paradise.add(birds);paradise.visible=true;scene.add(paradise);
+
 const clock = new THREE.Clock();
 let previousElapsed = 0;
 let yaw = 0, pitch = 0, targetYaw = 0, targetPitch = 0;
 let dragging = false, pointerX = 0, pointerY = 0, firstFrameRendered = false;
+let preludeRunning = false, preludeStartedAt = 0;
 let journeyRunning = false, journeyFinished = false, journeyStartedAt = 0, currentPhase = -1, drift = 0;
 let flashStartedAt = -99;
 let audioContext, masterGain, calmGain, distressGain, flatlineGain;
@@ -176,7 +192,7 @@ function createTone(destination, frequency, type = "sine", volume = .02) {
 }
 
 function playBirdPhrase() {
-  if (!audioContext || !journeyRunning || currentPhase !== 0) return;
+  if (!audioContext || !(preludeRunning || (journeyRunning && currentPhase === 0))) return;
   const now = audioContext.currentTime + .04;
   const pan = audioContext.createStereoPanner();
   pan.pan.value = Math.random() * 1.4 - .7;
@@ -199,7 +215,7 @@ function playBirdPhrase() {
 }
 
 function playDistantTone() {
-  if (!audioContext || !journeyRunning || currentPhase !== 0) return;
+  if (!audioContext || !(preludeRunning || (journeyRunning && currentPhase === 0))) return;
   const now = audioContext.currentTime + .04;
   [523.25, 659.25, 783.99].forEach((frequency, i) => {
     const oscillator = audioContext.createOscillator();
@@ -303,6 +319,7 @@ function applyPhase(index, journeyTime) {
     birdTimer = window.setTimeout(playBirdPhrase, 450);
     playTimer = window.setTimeout(playDistantTone, 1800);
   }
+  paradise.visible = false;
   const white = index === 6;
   tunnel.visible = !white; portal.visible = !white; particles.visible = !white; whiteRoom.visible = white;
   document.body.classList.toggle("is-white-room", white);
@@ -311,31 +328,32 @@ function applyPhase(index, journeyTime) {
 }
 
 function resetExperience() {
-  journeyRunning = false; journeyFinished = false; currentPhase = -1; drift = 0;
-  endScreen.hidden = true;
+  preludeRunning = false; journeyRunning = false; journeyFinished = false; currentPhase = -1; drift = 0;
+  endScreen.hidden = true; startButton.hidden = false; startButton.textContent = "ENTER PARADISE";
+  stageLabel.textContent = "00 / PARADISE";
+  document.querySelector(".advisory").textContent = "15 SEC · SPATIAL BIRDSONG · THEN THE TUNNEL";
   document.body.classList.remove("is-running", "is-white-room");
-  startButton.hidden = false;
-  stageLabel.textContent = phases[0].label;
-  tunnel.visible = true; portal.visible = true; particles.visible = true; whiteRoom.visible = false;
-  tunnel.scale.set(1, 1, 1); portal.scale.set(1, 1, 1);
-  tunnelMaterial.uniforms.uDistress.value = 0; tunnelMaterial.uniforms.uChaos.value = 0; tunnelMaterial.uniforms.uFlash.value = 0;
-  scene.background.setHex(0x172119); scene.fog.color.setHex(0x172119);
-  if (audioContext) {
-    const now = audioContext.currentTime;
-    masterGain.gain.cancelScheduledValues(now);
-    masterGain.gain.exponentialRampToValueAtTime(.0001, now + .25);
-  }
+  paradise.visible = true; tunnel.visible = false; portal.visible = false; particles.visible = false; whiteRoom.visible = false;
+  scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11);
+  if (audioContext) { const now=audioContext.currentTime; masterGain.gain.cancelScheduledValues(now); masterGain.gain.exponentialRampToValueAtTime(.0001,now+.25); }
 }
-
 async function startJourney() {
-  if (journeyRunning) return;
+  if (preludeRunning || journeyRunning) return;
   try { await prepareAudio(); } catch { status.textContent = "Sound could not start"; }
-  endScreen.hidden = true;
-  startButton.hidden = true;
-  document.body.classList.add("is-running");
-  journeyRunning = true; journeyFinished = false; currentPhase = -1; drift = 0;
-  journeyStartedAt = clock.getElapsedTime();
-  applyPhase(0, 0);
+  startButton.hidden = true; document.body.classList.add("is-running"); preludeRunning=true; preludeStartedAt=clock.getElapsedTime(); currentPhase=0; setAudioPhase(0);
+  window.clearTimeout(birdTimer); window.clearTimeout(playTimer); birdTimer=window.setTimeout(playBirdPhrase,160); playTimer=window.setTimeout(playDistantTone,1000);
+}
+function beginTunnel(elapsed) {
+  preludeRunning=false; paradise.visible=false; scene.background.setHex(0x172119);scene.fog.color.setHex(0x172119);scene.fog.density=.018;
+  tunnel.visible=true;portal.visible=true;particles.visible=true;whiteRoom.visible=false;tunnel.position.z=-38;tunnel.scale.set(1,1,1);portal.scale.set(1,1,1);
+  journeyRunning=true;journeyFinished=false;currentPhase=-1;drift=0;journeyStartedAt=elapsed;applyPhase(0,0);
+}
+function updateParadise(elapsed) {
+  const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smoothstep(t,PRELUDE_DURATION-3.2,PRELUDE_DURATION);
+  camera.position.z=11-pull*8.5;camera.position.y=Math.sin(t*.45)*.12;
+  birdFlights.forEach(f=>{f.bird.position.x=f.x+Math.sin(t*f.speed+f.phase)*4;f.bird.position.y=f.y+Math.sin(t*f.speed*2+f.phase)*.7;f.bird.rotation.z=Math.sin(t*f.speed*2+f.phase)*.28;});
+  if(pull>0){tunnel.visible=true;portal.visible=true;particles.visible=true;tunnel.scale.setScalar(.12+pull*.88);tunnel.position.z=-64+pull*26;portal.scale.setScalar(.08+pull*.92);portal.position.z=tunnel.position.z-57;tunnelMaterial.uniforms.uDistress.value=pull*.16;tunnelMaterial.uniforms.uChaos.value=pull*.08;tunnelMaterial.uniforms.uFlow.value=.45+pull*1.3;}
+  if(t>=PRELUDE_DURATION) beginTunnel(elapsed);
 }
 
 function finishJourney() {
@@ -403,6 +421,7 @@ renderer.setAnimationLoop(() => {
 
   let journeyTime = 0;
   let phase = phases[0];
+  if (preludeRunning) updateParadise(elapsed);
   if (journeyRunning) {
     journeyTime = (elapsed - journeyStartedAt) * CLOCK_RATE;
     if (journeyTime >= JOURNEY_DURATION) finishJourney();
