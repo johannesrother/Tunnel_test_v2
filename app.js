@@ -13,7 +13,7 @@ const endScreen = document.querySelector("#end-screen");
 const TEST_MODE = new URLSearchParams(window.location.search).has("test");
 const CLOCK_RATE = TEST_MODE ? 10 : 1;
 const JOURNEY_DURATION = 60;
-const PRELUDE_DURATION = TEST_MODE ? 2.2 : 15;
+const PRELUDE_DURATION = TEST_MODE ? 1.6 : 10;
 const phases = [
   { start: 0, label: "01 / CALM", distress: 0, chaos: 0, scale: 1, speed: 0.36 },
   { start: 8, label: "02 / UNEASE", distress: 0.28, chaos: 0.24, scale: 0.84, speed: 0.65 },
@@ -146,9 +146,14 @@ whiteRoom.visible = false;
 scene.add(whiteRoom);
 
 const paradise = new THREE.Group();
-const sky = new THREE.Mesh(new THREE.SphereGeometry(90, 32, 20), new THREE.MeshBasicMaterial({ color: 0x91d9ff, side: THREE.BackSide }));
+const sky = new THREE.Mesh(new THREE.SphereGeometry(90, 48, 32), new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  uniforms: { uTime: { value: 0 } },
+  vertexShader: "varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
+  fragmentShader: "uniform float uTime;varying vec3 vP;float n(vec2 p){return fract(sin(dot(p,vec2(41.7,289.1)))*43758.5);}void main(){vec3 d=normalize(vP);float h=smoothstep(-.5,.7,d.y);vec3 horizon=mix(vec3(.16,.42,.35),vec3(.68,.88,1.),h);float cloud=smoothstep(.78,.92,sin(d.x*16.+d.z*12.+uTime*.045)*.5+.5)*smoothstep(.02,.5,d.y);gl_FragColor=vec4(mix(horizon,vec3(1.,.98,.88),cloud*.42),1.);}"
+}));
 const meadow = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), new THREE.MeshLambertMaterial({ color: 0x5caf4b }));
-meadow.rotation.x = -Math.PI / 2; meadow.position.y = -1.7;
+meadow.rotation.x = -Math.PI / 2; meadow.position.y = -48; meadow.visible = false;
 const sun = new THREE.Mesh(new THREE.SphereGeometry(5, 24, 16), new THREE.MeshBasicMaterial({ color: 0xfff0a8 }));
 sun.position.set(-20, 17, -42);
 paradise.add(sky, meadow, sun, new THREE.HemisphereLight(0xdff5ff, 0x4d8d43, 2.2));
@@ -331,7 +336,7 @@ function resetExperience() {
   preludeRunning = false; journeyRunning = false; journeyFinished = false; currentPhase = -1; drift = 0;
   endScreen.hidden = true; startButton.hidden = false; startButton.textContent = "ENTER PARADISE";
   stageLabel.textContent = "00 / PARADISE";
-  document.querySelector(".advisory").textContent = "15 SEC · SPATIAL BIRDSONG · THEN THE TUNNEL";
+  document.querySelector(".advisory").textContent = "10 SEC · SPATIAL BIRDSONG · ACCELERATION";
   document.body.classList.remove("is-running", "is-white-room");
   paradise.visible = true; tunnel.visible = false; portal.visible = false; particles.visible = false; whiteRoom.visible = false;
   scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11);
@@ -349,10 +354,10 @@ function beginTunnel(elapsed) {
   journeyRunning=true;journeyFinished=false;currentPhase=-1;drift=0;journeyStartedAt=elapsed;applyPhase(0,0);
 }
 function updateParadise(elapsed) {
-  const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smoothstep(t,PRELUDE_DURATION-3.2,PRELUDE_DURATION);
-  camera.position.z=11-pull*8.5;camera.position.y=Math.sin(t*.45)*.12;
+  const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-4,PRELUDE_DURATION), surge=1-Math.pow(1-pull,3);
+  camera.position.z=11-surge*21;camera.position.y=Math.sin(t*.45)*.12*(1-pull); sky.material.uniforms.uTime.value=elapsed;
   birdFlights.forEach(f=>{f.bird.position.x=f.x+Math.sin(t*f.speed+f.phase)*4;f.bird.position.y=f.y+Math.sin(t*f.speed*2+f.phase)*.7;f.bird.rotation.z=Math.sin(t*f.speed*2+f.phase)*.28;});
-  if(pull>0){tunnel.visible=true;portal.visible=true;particles.visible=true;tunnel.scale.setScalar(.12+pull*.88);tunnel.position.z=-64+pull*26;portal.scale.setScalar(.08+pull*.92);portal.position.z=tunnel.position.z-57;tunnelMaterial.uniforms.uDistress.value=pull*.16;tunnelMaterial.uniforms.uChaos.value=pull*.08;tunnelMaterial.uniforms.uFlow.value=.45+pull*1.3;}
+  if(pull>0){tunnel.visible=true;portal.visible=true;particles.visible=true;tunnel.scale.setScalar(.035+surge*.965);tunnel.position.z=-105+surge*67;portal.scale.setScalar(.025+surge*.975);portal.position.z=tunnel.position.z-57;tunnelMaterial.uniforms.uDistress.value=surge*.2;tunnelMaterial.uniforms.uChaos.value=surge*.12;tunnelMaterial.uniforms.uFlow.value=.4+surge*4.4;particles.rotation.z+=surge*.045;paradise.position.z=surge*18;paradise.rotation.y=Math.sin(t*.4)*.025*(1-pull);}
   if(t>=PRELUDE_DURATION) beginTunnel(elapsed);
 }
 
