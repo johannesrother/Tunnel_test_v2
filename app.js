@@ -32,11 +32,11 @@ const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 150);
 camera.position.set(0, 0, 11);
 const rig = new THREE.Group();
 rig.add(camera);
-// The track rig follows the spline; the inner rig keeps the viewer's look input.
-// Keeping these transforms separate prevents curve steering from adding roll.
-const trackRig = new THREE.Group();
-trackRig.add(rig);
-scene.add(trackRig);
+// This is the actual viewer dolly: it translates the spectator through the
+// static tunnel. The inner rig keeps look input separate from the route.
+const viewerDolly = new THREE.Group();
+viewerDolly.add(rig);
+scene.add(viewerDolly);
 
 // Five very broad, low-amplitude bends. The first third is nearly straight,
 // while the last two control points deliberately settle into the central axis
@@ -57,6 +57,7 @@ const TUNNEL_RADIAL_SEGMENTS = 72;
 const TUNNEL_PATH_LENGTH = tunnelPath.getLength();
 // One linear route pass makes the forward flight continuously perceptible.
 const TUNNEL_ROUTE_DURATION = phases[6].start;
+const VIEWER_FORWARD_SPEED = TUNNEL_PATH_LENGTH / TUNNEL_ROUTE_DURATION;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const PORTAL_NORMAL = new THREE.Vector3(0, 0, 1);
 
@@ -464,13 +465,13 @@ const portalFrame = createTunnelFrame();
 const cameraLookAhead = new THREE.Vector3();
 const portalFacing = new THREE.Vector3();
 
-function updateTunnelFollower(routeProgress) {
+function moveViewerAlongTunnel(routeProgress) {
   const progress = THREE.MathUtils.clamp(routeProgress, 0, .998);
   sampleTunnelFrame(progress, cameraFrame);
   tunnelPath.getPointAt(Math.min(progress + .0035, 1), cameraLookAhead);
-  trackRig.position.copy(cameraFrame.center);
-  trackRig.up.copy(WORLD_UP);
-  trackRig.lookAt(cameraLookAhead);
+  viewerDolly.position.copy(cameraFrame.center);
+  viewerDolly.up.copy(WORLD_UP);
+  viewerDolly.lookAt(cameraLookAhead);
 
   // The portal stays ahead on the same centreline and faces back along its tangent.
   sampleTunnelFrame(Math.min(progress + .36, .998), portalFrame);
@@ -509,7 +510,7 @@ let previousElapsed = 0;
 let yaw = 0, pitch = 0, targetYaw = 0, targetPitch = 0;
 let dragging = false, pointerX = 0, pointerY = 0, firstFrameRendered = false;
 let preludeRunning = false, preludeStartedAt = 0;
-let journeyRunning = false, journeyFinished = false, journeyStartedAt = 0, currentPhase = -1;
+let journeyRunning = false, journeyFinished = false, journeyStartedAt = 0, currentPhase = -1, viewerDistance = 0;
 let flashStartedAt = -99;
 let audioContext, masterGain, calmGain, distressGain, flatlineGain;
 let soundscapeCreated = false, birdTimer, playTimer;
@@ -673,13 +674,13 @@ function applyPhase(index, journeyTime) {
 }
 
 function resetExperience() {
-  preludeRunning = false; journeyRunning = false; journeyFinished = false; currentPhase = -1;
+  preludeRunning = false; journeyRunning = false; journeyFinished = false; currentPhase = -1; viewerDistance = 0;
   endScreen.hidden = true; startButton.hidden = false; startButton.textContent = "ENTER PARADISE";
   stageLabel.textContent = "00 / PARADISE";
   document.querySelector(".advisory").textContent = "10 SEC · SPATIAL BIRDSONG · ACCELERATION";
   document.body.classList.remove("is-running", "is-white-room");
   paradise.visible = true; tunnel.visible = false; portal.visible = false; particles.visible = false; fabricMembranes.visible = false; whiteRoom.visible = false;
-  scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11); trackRig.position.set(0,0,0); trackRig.quaternion.identity(); rig.rotation.set(0,0,0); tunnelMaterial.uniforms.uRadiusScale.value = 1; paradise.position.set(0,0,0); paradise.rotation.set(0,0,0); sky.material.opacity = 1;
+  scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11); viewerDolly.position.set(0,0,0); viewerDolly.quaternion.identity(); rig.rotation.set(0,0,0); tunnelMaterial.uniforms.uRadiusScale.value = 1; paradise.position.set(0,0,0); paradise.rotation.set(0,0,0); sky.material.opacity = 1;
   if (audioContext) { const now=audioContext.currentTime; masterGain.gain.cancelScheduledValues(now); masterGain.gain.exponentialRampToValueAtTime(.0001,now+.25); }
 }
 async function startJourney() {
@@ -690,7 +691,7 @@ async function startJourney() {
 }
 function beginTunnel(elapsed) {
   preludeRunning=false; paradise.visible=false; scene.background.setHex(0x172119);scene.fog.color.setHex(0x172119);scene.fog.density=.018;
-  tunnel.visible=true;portal.visible=true;particles.visible=true;fabricMembranes.visible=false;whiteRoom.visible=false;camera.position.set(0,0,0);rig.rotation.set(0,0,0);tunnelMaterial.uniforms.uRadiusScale.value=1;portal.scale.set(1,1,1);updateTunnelFollower(0);
+  tunnel.visible=true;portal.visible=true;particles.visible=true;fabricMembranes.visible=false;whiteRoom.visible=false;camera.position.set(0,0,0);rig.rotation.set(0,0,0);tunnelMaterial.uniforms.uRadiusScale.value=1;portal.scale.set(1,1,1);viewerDistance=0;moveViewerAlongTunnel(0);
   journeyRunning=true;journeyFinished=false;currentPhase=-1;journeyStartedAt=elapsed;applyPhase(0,0);
 }
 function updateParadise(elapsed) {
@@ -788,9 +789,12 @@ renderer.setAnimationLoop(() => {
       // Preserve the 3.5 m → 1.5 m corridor while the centreline itself stays fixed.
       tunnelMaterial.uniforms.uRadiusScale.value = Math.max(.24, scale);
       portal.scale.setScalar(Math.max(.055, scale * scale));
-      // Camera translation is independent of the panic-speed effects: it keeps
-      // advancing steadily along the centreline for a calm, unmistakable flight.
-      updateTunnelFollower(journeyTime / TUNNEL_ROUTE_DURATION);
+      // Advance the viewer dolly itself. The tunnel remains static in world space.
+      viewerDistance = Math.min(
+        TUNNEL_PATH_LENGTH * .998,
+        viewerDistance + delta * CLOCK_RATE * VIEWER_FORWARD_SPEED
+      );
+      moveViewerAlongTunnel(viewerDistance / TUNNEL_PATH_LENGTH);
       particles.rotation.z += delta * speed * (.015 + chaos * .11);
       particles.rotation.x = Math.sin(elapsed * (1 + chaos * 4)) * chaos * .16;
       particleMaterial.color.setRGB(THREE.MathUtils.lerp(.95, .95, distress), THREE.MathUtils.lerp(.81, .08, distress), THREE.MathUtils.lerp(.45, .15, distress));
