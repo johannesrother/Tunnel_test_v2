@@ -140,6 +140,198 @@ const particleMaterial = new THREE.PointsMaterial({ color: 0xf1cf72, size: .045,
 const particles = new THREE.Points(particleGeometry, particleMaterial);
 scene.add(particles);
 
+// Textile interlude (12–29 s): thin, tapered membranes are stretched between
+// neighbouring tunnel anchors.  Keeping both anchors on one side of the tunnel
+// leaves a reliable, collision-free corridor around the camera.
+const FABRIC_START = 12;
+const FABRIC_END = 29;
+const FABRIC_COUNT = 18;
+const FABRIC_TRACK_LENGTH = 96;
+const fabricMembranes = new THREE.Group();
+fabricMembranes.visible = false;
+scene.add(fabricMembranes);
+
+const fabricMaterial = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  uniforms: {
+    uTime: { value: 0 },
+    uOpacity: { value: .5 },
+    uPhase: { value: 0 },
+    uTwist: { value: 0 },
+    uCalm: { value: 0 },
+    uNervous: { value: 0 },
+    uJolt: { value: 0 }
+  },
+  vertexShader: `
+    uniform float uTime;
+    uniform float uPhase;
+    uniform float uTwist;
+    uniform float uCalm;
+    uniform float uNervous;
+    uniform float uJolt;
+    attribute float aAlong;
+    attribute float aAcross;
+    varying float vAlong;
+    varying float vAcross;
+    varying float vLight;
+    void main(){
+      vAlong=aAlong;
+      vAcross=aAcross;
+      float breathing=sin(aAlong*6.28318+uTime*(.58+uCalm*.24)+uPhase)*(.10+.11*uCalm);
+      float ripple=sin(aAlong*14.0-uTime*(.76+uNervous*1.8)+uPhase*2.7)*(.025+.15*uNervous);
+      float fineWave=sin(aAlong*26.0+uTime*1.9+uPhase*4.0)*(.016+.052*uNervous);
+      float jolt=sin(aAlong*25.0+uPhase*9.0+uTime*30.0)*uJolt*.23;
+      float angle=(aAlong-.5)*uTwist+sin(aAlong*8.0+uTime*.7+uPhase)*uNervous*.12;
+      float bentDepth=breathing+ripple+fineWave+jolt;
+      float c=cos(angle), s=sin(angle);
+      vec2 twisted=mat2(c,-s,s,c)*vec2(position.x,bentDepth);
+      vec3 transformed=vec3(twisted.x,position.y+sin(aAlong*9.0+uTime*.55+uPhase)*(.025+.055*uCalm)+jolt*.12,twisted.y);
+      vLight=.78+.22*sin(aAlong*5.2+uPhase)*.5+.11*abs(aAcross);
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(transformed,1.);
+    }
+  `,
+  fragmentShader: `
+    precision mediump float;
+    uniform float uOpacity;
+    varying float vAlong;
+    varying float vAcross;
+    varying float vLight;
+    void main(){
+      float tip=smoothstep(.0,.105,vAlong)*(1.-smoothstep(.895,1.,vAlong));
+      float edge=1.-smoothstep(.62,1.,abs(vAcross));
+      float weave=.94+.06*sin(vAlong*58.+vAcross*9.);
+      vec3 textile=mix(vec3(.74,.77,.80),vec3(.99,1.,1.),clamp(vLight,0.,1.))*weave;
+      gl_FragColor=vec4(textile,uOpacity*tip*(.78+.22*edge));
+    }
+  `
+});
+// Rendering transparent double-sided fabric in one pass saves work on Quest.
+fabricMaterial.forceSinglePass = true;
+
+function seededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function createFabricGeometry(width) {
+  // A 3 × 9 grid is enough for soft curves, while sin(t) tapers it into points.
+  const alongSegments = 9;
+  const acrossSegments = 3;
+  const positions = [];
+  const alongValues = [];
+  const acrossValues = [];
+  const indices = [];
+  for (let row = 0; row <= alongSegments; row += 1) {
+    const along = row / alongSegments;
+    const taper = Math.pow(Math.sin(Math.PI * along), .62);
+    for (let column = 0; column <= acrossSegments; column += 1) {
+      const across = column / acrossSegments * 2 - 1;
+      positions.push(across * width * taper, along - .5, 0);
+      alongValues.push(along);
+      acrossValues.push(across);
+    }
+  }
+  for (let row = 0; row < alongSegments; row += 1) {
+    for (let column = 0; column < acrossSegments; column += 1) {
+      const a = row * (acrossSegments + 1) + column;
+      const b = a + acrossSegments + 1;
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("aAlong", new THREE.Float32BufferAttribute(alongValues, 1));
+  geometry.setAttribute("aAcross", new THREE.Float32BufferAttribute(acrossValues, 1));
+  geometry.setIndex(indices);
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function createFabricMembranes() {
+  const random = seededRandom(29012026);
+  const localUp = new THREE.Vector3(0, 1, 0);
+  for (let index = 0; index < FABRIC_COUNT; index += 1) {
+    const angleA = random() * Math.PI * 2;
+    // Adjacent anchors create diagonals and spirals without closing the centre.
+    const angleB = angleA + (random() < .5 ? -1 : 1) * (.24 + random() * .88);
+    const radiusA = 4.9 + random() * .55;
+    const radiusB = 4.9 + random() * .55;
+    const zCenter = -FABRIC_TRACK_LENGTH + random() * FABRIC_TRACK_LENGTH;
+    const zSpan = 5.5 + random() * 13.5;
+    const anchorA = new THREE.Vector3(Math.cos(angleA) * radiusA, Math.sin(angleA) * radiusA, zCenter - zSpan * .5);
+    const anchorB = new THREE.Vector3(Math.cos(angleB) * radiusB, Math.sin(angleB) * radiusB, zCenter + zSpan * .5);
+    const direction = anchorB.clone().sub(anchorA);
+    const mesh = new THREE.Mesh(createFabricGeometry(.34 + random() * .28), fabricMaterial);
+    mesh.position.copy(anchorA).add(anchorB).multiplyScalar(.5);
+    mesh.quaternion.setFromUnitVectors(localUp, direction.clone().normalize());
+    mesh.scale.y = direction.length();
+    mesh.renderOrder = 3;
+
+    const data = {
+      mesh,
+      phase: random() * Math.PI * 2,
+      twist: .38 + random() * .42,
+      trackOffset: zCenter + FABRIC_TRACK_LENGTH,
+      revealAt: index / (FABRIC_COUNT - 1) * .72,
+      opacity: .50 + random() * .13,
+      jolt: 0,
+      nextJolt: 0
+    };
+    mesh.userData.fabric = data;
+    // Materials are shared; uniforms are set immediately before each draw.
+    mesh.onBeforeRender = () => {
+      fabricMaterial.uniforms.uOpacity.value = data.currentOpacity;
+      fabricMaterial.uniforms.uPhase.value = data.phase;
+      fabricMaterial.uniforms.uTwist.value = data.twist * (1 + data.nervous * 1.9);
+      fabricMaterial.uniforms.uCalm.value = data.calm;
+      fabricMaterial.uniforms.uNervous.value = data.nervous;
+      fabricMaterial.uniforms.uJolt.value = data.jolt;
+    };
+    fabricMembranes.add(mesh);
+  }
+}
+
+function positiveModulo(value, modulus) {
+  return ((value % modulus) + modulus) % modulus;
+}
+
+function updateFabricMembranes(journeyTime, elapsed, delta, tunnelScale, driftDistance) {
+  const active = journeyTime >= FABRIC_START && journeyTime < FABRIC_END;
+  fabricMembranes.visible = active;
+  if (!active) return;
+
+  const progress = THREE.MathUtils.clamp((journeyTime - FABRIC_START) / (FABRIC_END - FABRIC_START), 0, 1);
+  const fadeIn = THREE.MathUtils.smoothstep(0, .06, progress);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(.9, 1, progress);
+  const nervous = THREE.MathUtils.smoothstep(.34, .96, progress);
+  // Follow the existing narrowing tunnel only in its radial dimensions.
+  fabricMembranes.scale.set(tunnelScale, tunnelScale, 1);
+  fabricMaterial.uniforms.uTime.value = elapsed;
+
+  fabricMembranes.children.forEach((mesh) => {
+    const data = mesh.userData.fabric;
+    const reveal = THREE.MathUtils.smoothstep(data.revealAt, data.revealAt + .16, progress);
+    mesh.visible = reveal > .01;
+    // The reset occurs behind the camera, so the endless textile track never pops in view.
+    mesh.position.z = -FABRIC_TRACK_LENGTH + positiveModulo(data.trackOffset + driftDistance * 1.15, FABRIC_TRACK_LENGTH);
+    data.calm = 1 - nervous;
+    data.nervous = nervous;
+    if (nervous > .18 && elapsed >= data.nextJolt) {
+      data.jolt = (.22 + Math.random() * .64) * nervous;
+      data.nextJolt = elapsed + .38 + Math.random() * 1.35;
+    }
+    data.jolt = Math.max(0, data.jolt - delta * 2.7);
+    data.currentOpacity = data.opacity * reveal * fadeIn * fadeOut;
+  });
+}
+
+createFabricMembranes();
+
 const whiteRoomMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide });
 const whiteRoom = new THREE.Mesh(new THREE.SphereGeometry(42, 32, 20), whiteRoomMaterial);
 whiteRoom.visible = false;
@@ -338,7 +530,7 @@ function resetExperience() {
   stageLabel.textContent = "00 / PARADISE";
   document.querySelector(".advisory").textContent = "10 SEC · SPATIAL BIRDSONG · ACCELERATION";
   document.body.classList.remove("is-running", "is-white-room");
-  paradise.visible = true; tunnel.visible = false; portal.visible = false; particles.visible = false; whiteRoom.visible = false;
+  paradise.visible = true; tunnel.visible = false; portal.visible = false; particles.visible = false; fabricMembranes.visible = false; whiteRoom.visible = false;
   scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11); paradise.position.set(0,0,0); paradise.rotation.set(0,0,0); sky.material.opacity = 1;
   if (audioContext) { const now=audioContext.currentTime; masterGain.gain.cancelScheduledValues(now); masterGain.gain.exponentialRampToValueAtTime(.0001,now+.25); }
 }
@@ -350,7 +542,7 @@ async function startJourney() {
 }
 function beginTunnel(elapsed) {
   preludeRunning=false; paradise.visible=false; scene.background.setHex(0x172119);scene.fog.color.setHex(0x172119);scene.fog.density=.018;
-  tunnel.visible=true;portal.visible=true;particles.visible=true;whiteRoom.visible=false;tunnel.position.z=-38;tunnel.scale.set(1,1,1);portal.scale.set(1,1,1);
+  tunnel.visible=true;portal.visible=true;particles.visible=true;fabricMembranes.visible=false;whiteRoom.visible=false;tunnel.position.z=-38;tunnel.scale.set(1,1,1);portal.scale.set(1,1,1);
   journeyRunning=true;journeyFinished=false;currentPhase=-1;drift=0;journeyStartedAt=elapsed;applyPhase(0,0);
 }
 function updateParadise(elapsed) {
@@ -454,6 +646,7 @@ renderer.setAnimationLoop(() => {
       particles.rotation.x = Math.sin(elapsed * (1 + chaos * 4)) * chaos * .16;
       particleMaterial.color.setRGB(THREE.MathUtils.lerp(.95, .95, distress), THREE.MathUtils.lerp(.81, .08, distress), THREE.MathUtils.lerp(.45, .15, distress));
       particleMaterial.size = .045 + chaos * .075;
+      updateFabricMembranes(journeyTime, elapsed, delta, scale, drift);
     }
   }
 
