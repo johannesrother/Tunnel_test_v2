@@ -32,7 +32,93 @@ const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 150);
 camera.position.set(0, 0, 11);
 const rig = new THREE.Group();
 rig.add(camera);
-scene.add(rig);
+// The track rig follows the spline; the inner rig keeps the viewer's look input.
+// Keeping these transforms separate prevents curve steering from adding roll.
+const trackRig = new THREE.Group();
+trackRig.add(rig);
+scene.add(trackRig);
+
+// Five very broad, low-amplitude bends. The first third is nearly straight,
+// while the last two control points deliberately settle into the central axis
+// before the white room.
+const tunnelPath = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(0, 0, -10),
+  new THREE.Vector3(.12, .03, -31),
+  new THREE.Vector3(-.55, .18, -59),
+  new THREE.Vector3(.98, -.4, -92),
+  new THREE.Vector3(-2.15, .72, -128),
+  new THREE.Vector3(1.82, -.68, -158),
+  new THREE.Vector3(.22, -.06, -185),
+  new THREE.Vector3(0, 0, -208),
+  new THREE.Vector3(0, 0, -234)
+], false, "centripetal", .32);
+const TUNNEL_SEGMENTS = 224;
+const TUNNEL_RADIAL_SEGMENTS = 72;
+const TUNNEL_PATH_LENGTH = tunnelPath.getLength();
+const TUNNEL_TRAVEL_DISTANCE = 150;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const PORTAL_NORMAL = new THREE.Vector3(0, 0, 1);
+
+function createTunnelFrame() {
+  return {
+    center: new THREE.Vector3(),
+    tangent: new THREE.Vector3(),
+    right: new THREE.Vector3(),
+    up: new THREE.Vector3()
+  };
+}
+
+function sampleTunnelFrame(progress, frame) {
+  const clamped = THREE.MathUtils.clamp(progress, 0, 1);
+  tunnelPath.getPointAt(clamped, frame.center);
+  tunnelPath.getTangentAt(clamped, frame.tangent).normalize();
+  // A world-up frame locks roll to the horizon, which is more comfortable in VR.
+  frame.right.crossVectors(frame.tangent, WORLD_UP).normalize();
+  frame.up.crossVectors(frame.right, frame.tangent).normalize();
+  return frame;
+}
+
+function createCurvedTunnelGeometry() {
+  const positions = [];
+  const centers = [];
+  const uvs = [];
+  const indices = [];
+  const frame = createTunnelFrame();
+
+  for (let ring = 0; ring <= TUNNEL_SEGMENTS; ring += 1) {
+    const progress = ring / TUNNEL_SEGMENTS;
+    const radius = THREE.MathUtils.lerp(7.4, 6.3, progress);
+    sampleTunnelFrame(progress, frame);
+    for (let radial = 0; radial <= TUNNEL_RADIAL_SEGMENTS; radial += 1) {
+      const angle = radial / TUNNEL_RADIAL_SEGMENTS * Math.PI * 2;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      positions.push(
+        frame.center.x + frame.right.x * cos * radius + frame.up.x * sin * radius,
+        frame.center.y + frame.right.y * cos * radius + frame.up.y * sin * radius,
+        frame.center.z + frame.right.z * cos * radius + frame.up.z * sin * radius
+      );
+      centers.push(frame.center.x, frame.center.y, frame.center.z);
+      uvs.push(radial / TUNNEL_RADIAL_SEGMENTS, progress);
+    }
+  }
+
+  for (let ring = 0; ring < TUNNEL_SEGMENTS; ring += 1) {
+    for (let radial = 0; radial < TUNNEL_RADIAL_SEGMENTS; radial += 1) {
+      const a = ring * (TUNNEL_RADIAL_SEGMENTS + 1) + radial;
+      const b = a + TUNNEL_RADIAL_SEGMENTS + 1;
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("aCenter", new THREE.Float32BufferAttribute(centers, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "default", failIfMajorPerformanceCaveat: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
@@ -50,6 +136,8 @@ renderer.domElement.addEventListener("webglcontextlost", (event) => {
 const vertexShader = `
   uniform float uTime;
   uniform float uChaos;
+  uniform float uRadiusScale;
+  attribute vec3 aCenter;
   varying vec2 vUv;
   varying float vRidge;
   varying float vDepth;
@@ -62,7 +150,9 @@ const vertexShader = `
     float organic=noise(vec3(position.x*.28+uTime*uChaos*.08,position.y*.09-uTime*(.025+uChaos*.18),position.z*.28));
     float abrupt=sin(uv.y*34.-uTime*7.)*sin(uv.x*31.+uTime*4.3);
     float displacement=folded*(.055+uChaos*.22)+(organic-.5)*(.58+uChaos*.7)+breathing*.045+abrupt*uChaos*.15;
-    vec3 transformed=position+normal*displacement;
+    // Scale only away from the spline centre, never along the route itself.
+    // The tunnel can narrow without pulling its curve away from the camera.
+    vec3 transformed=aCenter+(position-aCenter)*uRadiusScale+normal*displacement;
     transformed.xz+=vec2(sin(position.y*.18+uTime*2.1),cos(position.y*.13-uTime*1.7))*uChaos*.22;
     vRidge=folded*.5+.5;vDepth=transformed.y;
     gl_Position=projectionMatrix*modelViewMatrix*vec4(transformed,1.);
@@ -106,33 +196,34 @@ const tunnelMaterial = new THREE.ShaderMaterial({
   side: THREE.BackSide,
   uniforms: {
     uTime: { value: 0 }, uFlow: { value: phases[0].speed }, uDistress: { value: 0 },
-    uChaos: { value: 0 }, uFlash: { value: 0 }
+    uChaos: { value: 0 }, uFlash: { value: 0 }, uRadiusScale: { value: 1 }
   },
   vertexShader, fragmentShader
 });
-const tunnel = new THREE.Mesh(new THREE.CylinderGeometry(6.3, 13, 120, 112, 320, true), tunnelMaterial);
-tunnel.rotation.x = Math.PI / 2;
-tunnel.position.z = -38;
+const tunnel = new THREE.Mesh(createCurvedTunnelGeometry(), tunnelMaterial);
 scene.add(tunnel);
 
 const portalMaterial = new THREE.ShaderMaterial({
-  transparent: true, depthWrite: false,
+  transparent: true, depthWrite: false, side: THREE.DoubleSide,
   uniforms: { uOpacity: { value: .82 }, uDistress: { value: 0 } },
   vertexShader: `varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
   fragmentShader: `uniform float uOpacity;uniform float uDistress;varying vec2 vUv;void main(){float d=length(vUv-.5)*2.;float e=1.-smoothstep(.54,1.,d);float c=1.-smoothstep(0.,.92,d);vec3 calm=mix(vec3(.66,.8,.77),vec3(1.,.93,.67),c);vec3 peak=mix(vec3(.18,.005,.03),vec3(1.),pow(c,5.));gl_FragColor=vec4(mix(calm,peak,uDistress),e*uOpacity);}`
 });
 const portal = new THREE.Mesh(new THREE.CircleGeometry(20, 72), portalMaterial);
-portal.position.z = -95;
 scene.add(portal);
 
 const particleCount = 700;
 const particlePositions = new Float32Array(particleCount * 3);
+const particleFrame = createTunnelFrame();
 for (let i = 0; i < particleCount; i += 1) {
+  sampleTunnelFrame(Math.random() * .96, particleFrame);
   const angle = Math.random() * Math.PI * 2;
   const radius = 3.4 + Math.random() * 1.15;
-  particlePositions[i * 3] = Math.cos(angle) * radius;
-  particlePositions[i * 3 + 1] = Math.sin(angle) * radius;
-  particlePositions[i * 3 + 2] = 12 - Math.random() * 118;
+  const cos = Math.cos(angle) * radius;
+  const sin = Math.sin(angle) * radius;
+  particlePositions[i * 3] = particleFrame.center.x + particleFrame.right.x * cos + particleFrame.up.x * sin;
+  particlePositions[i * 3 + 1] = particleFrame.center.y + particleFrame.right.y * cos + particleFrame.up.y * sin;
+  particlePositions[i * 3 + 2] = particleFrame.center.z + particleFrame.right.z * cos + particleFrame.up.z * sin;
 }
 const particleGeometry = new THREE.BufferGeometry();
 particleGeometry.setAttribute("position", new THREE.BufferAttribute(particlePositions, 3));
@@ -147,7 +238,7 @@ const FABRIC_START = 12;
 const FABRIC_END = 29;
 const FABRIC_COUNT = 24;
 const FABRIC_GATEWAY_COUNT = 6;
-const FABRIC_TRACK_LENGTH = 96;
+const FABRIC_ROUTE_LENGTH = 68;
 const fabricMembranes = new THREE.Group();
 fabricMembranes.visible = false;
 scene.add(fabricMembranes);
@@ -270,6 +361,8 @@ function createFabricGeometry(width) {
 function createFabricMembranes() {
   const random = seededRandom(29012026);
   const localUp = new THREE.Vector3(0, 1, 0);
+  const frameA = createTunnelFrame();
+  const frameB = createTunnelFrame();
   // The first six sheets form the recognizable room-scale installation. The
   // remaining membranes progressively fill the tunnel without sealing it shut.
   const gatewayAnchors = [
@@ -283,12 +376,18 @@ function createFabricMembranes() {
     const angleB = gateway ? gatewayAnchors[index][1] : angleA + (random() < .5 ? -1 : 1) * (.74 + random() * 1.34);
     const radiusA = 4.9 + random() * .55;
     const radiusB = 4.9 + random() * .55;
-    // The gateway sheets anchor the entrance visibly; the remaining sheet positions
-    // are distributed through the looping tunnel track.
-    const zCenter = gateway ? -17 - index * 14 : -FABRIC_TRACK_LENGTH + random() * FABRIC_TRACK_LENGTH;
-    const zSpan = gateway ? 17 + random() * 8 : 8 + random() * 15;
-    const anchorA = new THREE.Vector3(Math.cos(angleA) * radiusA, Math.sin(angleA) * radiusA, zCenter - zSpan * .5);
-    const anchorB = new THREE.Vector3(Math.cos(angleB) * radiusB, Math.sin(angleB) * radiusB, zCenter + zSpan * .5);
+    // Anchor cloth to the same spline as the camera and tunnel rings. The first
+    // six sheets sit close together in the textile passage; the rest fill its depth.
+    const routeDistance = gateway ? 13 + index * 8 : 7 + random() * FABRIC_ROUTE_LENGTH;
+    const span = gateway ? 17 + random() * 8 : 8 + random() * 15;
+    sampleTunnelFrame((routeDistance - span * .5) / TUNNEL_PATH_LENGTH, frameA);
+    sampleTunnelFrame((routeDistance + span * .5) / TUNNEL_PATH_LENGTH, frameB);
+    const anchorA = frameA.center.clone()
+      .addScaledVector(frameA.right, Math.cos(angleA) * radiusA)
+      .addScaledVector(frameA.up, Math.sin(angleA) * radiusA);
+    const anchorB = frameB.center.clone()
+      .addScaledVector(frameB.right, Math.cos(angleB) * radiusB)
+      .addScaledVector(frameB.up, Math.sin(angleB) * radiusB);
     const direction = anchorB.clone().sub(anchorA);
     const mesh = new THREE.Mesh(createFabricGeometry(gateway ? 1.42 + random() * .48 : .86 + random() * .58), fabricMaterial);
     mesh.position.copy(anchorA).add(anchorB).multiplyScalar(.5);
@@ -303,7 +402,6 @@ function createFabricMembranes() {
       gather: gateway ? .52 + random() * .2 : .32 + random() * .36,
       waist: .32 + random() * .36,
       drape: gateway ? .62 + random() * .36 : .3 + random() * .5,
-      trackOffset: zCenter + FABRIC_TRACK_LENGTH,
       // A compact reveal curve makes a textile cluster rather than isolated flags.
       revealAt: index / (FABRIC_COUNT - 1) * .52,
       opacity: gateway ? .84 + random() * .1 : .72 + random() * .13,
@@ -327,11 +425,7 @@ function createFabricMembranes() {
   }
 }
 
-function positiveModulo(value, modulus) {
-  return ((value % modulus) + modulus) % modulus;
-}
-
-function updateFabricMembranes(journeyTime, elapsed, delta, tunnelScale, driftDistance) {
+function updateFabricMembranes(journeyTime, elapsed, delta, tunnelScale) {
   const active = journeyTime >= FABRIC_START && journeyTime < FABRIC_END;
   fabricMembranes.visible = active;
   if (!active) return;
@@ -340,16 +434,14 @@ function updateFabricMembranes(journeyTime, elapsed, delta, tunnelScale, driftDi
   const fadeIn = THREE.MathUtils.smoothstep(progress, 0, .06);
   const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, .9, 1);
   const nervous = THREE.MathUtils.smoothstep(progress, .34, .96);
-  // Follow the existing narrowing tunnel only in its radial dimensions.
-  fabricMembranes.scale.set(tunnelScale, tunnelScale, 1);
   fabricMaterial.uniforms.uTime.value = elapsed;
 
   fabricMembranes.children.forEach((mesh) => {
     const data = mesh.userData.fabric;
     const reveal = THREE.MathUtils.smoothstep(progress, data.revealAt, data.revealAt + .16);
     mesh.visible = reveal > .01;
-    // The reset occurs behind the camera, so the endless textile track never pops in view.
-    mesh.position.z = -FABRIC_TRACK_LENGTH + positiveModulo(data.trackOffset + driftDistance * 1.15, FABRIC_TRACK_LENGTH);
+    // Narrow locally with the corridor without scaling the spline positions.
+    mesh.scale.x = Math.max(.38, tunnelScale);
     data.calm = 1 - nervous;
     data.nervous = nervous;
     if (nervous > .18 && elapsed >= data.nextJolt) {
@@ -363,8 +455,29 @@ function updateFabricMembranes(journeyTime, elapsed, delta, tunnelScale, driftDi
 
 createFabricMembranes();
 
+const cameraFrame = createTunnelFrame();
+const portalFrame = createTunnelFrame();
+const cameraLookAhead = new THREE.Vector3();
+const portalFacing = new THREE.Vector3();
+
+function updateTunnelFollower(routeProgress) {
+  const progress = THREE.MathUtils.clamp(routeProgress, 0, .998);
+  sampleTunnelFrame(progress, cameraFrame);
+  tunnelPath.getPointAt(Math.min(progress + .0035, 1), cameraLookAhead);
+  trackRig.position.copy(cameraFrame.center);
+  trackRig.up.copy(WORLD_UP);
+  trackRig.lookAt(cameraLookAhead);
+
+  // The portal stays ahead on the same centreline and faces back along its tangent.
+  sampleTunnelFrame(Math.min(progress + .36, .998), portalFrame);
+  portal.position.copy(portalFrame.center);
+  portalFacing.copy(portalFrame.tangent).negate();
+  portal.quaternion.setFromUnitVectors(PORTAL_NORMAL, portalFacing);
+}
+
 const whiteRoomMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide });
 const whiteRoom = new THREE.Mesh(new THREE.SphereGeometry(42, 32, 20), whiteRoomMaterial);
+whiteRoom.position.copy(tunnelPath.getPointAt(1));
 whiteRoom.visible = false;
 scene.add(whiteRoom);
 
@@ -562,7 +675,7 @@ function resetExperience() {
   document.querySelector(".advisory").textContent = "10 SEC · SPATIAL BIRDSONG · ACCELERATION";
   document.body.classList.remove("is-running", "is-white-room");
   paradise.visible = true; tunnel.visible = false; portal.visible = false; particles.visible = false; fabricMembranes.visible = false; whiteRoom.visible = false;
-  scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11); paradise.position.set(0,0,0); paradise.rotation.set(0,0,0); sky.material.opacity = 1;
+  scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11); trackRig.position.set(0,0,0); trackRig.quaternion.identity(); rig.rotation.set(0,0,0); tunnelMaterial.uniforms.uRadiusScale.value = 1; paradise.position.set(0,0,0); paradise.rotation.set(0,0,0); sky.material.opacity = 1;
   if (audioContext) { const now=audioContext.currentTime; masterGain.gain.cancelScheduledValues(now); masterGain.gain.exponentialRampToValueAtTime(.0001,now+.25); }
 }
 async function startJourney() {
@@ -573,14 +686,14 @@ async function startJourney() {
 }
 function beginTunnel(elapsed) {
   preludeRunning=false; paradise.visible=false; scene.background.setHex(0x172119);scene.fog.color.setHex(0x172119);scene.fog.density=.018;
-  tunnel.visible=true;portal.visible=true;particles.visible=true;fabricMembranes.visible=false;whiteRoom.visible=false;tunnel.position.z=-38;tunnel.scale.set(1,1,1);portal.scale.set(1,1,1);
+  tunnel.visible=true;portal.visible=true;particles.visible=true;fabricMembranes.visible=false;whiteRoom.visible=false;camera.position.set(0,0,0);rig.rotation.set(0,0,0);tunnelMaterial.uniforms.uRadiusScale.value=1;portal.scale.set(1,1,1);updateTunnelFollower(0);
   journeyRunning=true;journeyFinished=false;currentPhase=-1;drift=0;journeyStartedAt=elapsed;applyPhase(0,0);
 }
 function updateParadise(elapsed) {
   const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-4,PRELUDE_DURATION), surge=pull*pull*(3-2*pull), fade=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-2.8,PRELUDE_DURATION); sky.material.opacity=1-fade;
   camera.position.z=11-surge*21;camera.position.y=Math.sin(t*.45)*.12*(1-pull);
   birdFlights.forEach(f=>{f.bird.position.x=f.x+Math.sin(t*f.speed+f.phase)*4;f.bird.position.y=f.y+Math.sin(t*f.speed*2+f.phase)*.7;f.bird.rotation.z=Math.sin(t*f.speed*2+f.phase)*.28;});
-  if(pull>0){tunnel.visible=true;portal.visible=true;particles.visible=true;tunnel.scale.setScalar(.035+surge*.965);tunnel.position.z=-105+surge*67;portal.scale.setScalar(.025+surge*.975);portal.position.z=tunnel.position.z-57;tunnelMaterial.uniforms.uDistress.value=surge*.2;tunnelMaterial.uniforms.uChaos.value=surge*.12;tunnelMaterial.uniforms.uFlow.value=.4+surge*4.4;particles.rotation.z+=surge*.045;paradise.position.z=surge*18;paradise.rotation.y=Math.sin(t*.4)*.025*(1-pull);}
+  if(pull>0){tunnel.visible=true;portal.visible=true;particles.visible=true;tunnelMaterial.uniforms.uRadiusScale.value=.035+surge*.965;portal.scale.setScalar(.025+surge*.975);sampleTunnelFrame(.36,portalFrame);portal.position.copy(portalFrame.center);portalFacing.copy(portalFrame.tangent).negate();portal.quaternion.setFromUnitVectors(PORTAL_NORMAL,portalFacing);tunnelMaterial.uniforms.uDistress.value=surge*.2;tunnelMaterial.uniforms.uChaos.value=surge*.12;tunnelMaterial.uniforms.uFlow.value=.4+surge*4.4;particles.rotation.z+=surge*.045;paradise.position.z=surge*18;paradise.rotation.y=Math.sin(t*.4)*.025*(1-pull);}
   if(t>=PRELUDE_DURATION) beginTunnel(elapsed);
 }
 
@@ -668,16 +781,16 @@ renderer.setAnimationLoop(() => {
       tunnelMaterial.uniforms.uChaos.value = chaos;
       tunnelMaterial.uniforms.uFlow.value = speed;
       portalMaterial.uniforms.uDistress.value = distress;
-      tunnel.scale.x = scale; tunnel.scale.y = 1; tunnel.scale.z = scale;
+      // Preserve the 3.5 m → 1.5 m corridor while the centreline itself stays fixed.
+      tunnelMaterial.uniforms.uRadiusScale.value = Math.max(.24, scale);
       portal.scale.setScalar(Math.max(.055, scale * scale));
       drift += delta * CLOCK_RATE * speed * 1.55;
-      tunnel.position.z = -38 + (drift % 14);
-      particles.position.z = drift % 12;
+      updateTunnelFollower(drift / TUNNEL_TRAVEL_DISTANCE);
       particles.rotation.z += delta * speed * (.015 + chaos * .11);
       particles.rotation.x = Math.sin(elapsed * (1 + chaos * 4)) * chaos * .16;
       particleMaterial.color.setRGB(THREE.MathUtils.lerp(.95, .95, distress), THREE.MathUtils.lerp(.81, .08, distress), THREE.MathUtils.lerp(.45, .15, distress));
       particleMaterial.size = .045 + chaos * .075;
-      updateFabricMembranes(journeyTime, elapsed, delta, scale, drift);
+      updateFabricMembranes(journeyTime, elapsed, delta, scale);
     }
   }
 
