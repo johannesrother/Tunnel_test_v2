@@ -55,7 +55,8 @@ const tunnelPath = new THREE.CatmullRomCurve3([
 const TUNNEL_SEGMENTS = 224;
 const TUNNEL_RADIAL_SEGMENTS = 72;
 const TUNNEL_PATH_LENGTH = tunnelPath.getLength();
-const TUNNEL_TRAVEL_DISTANCE = 150;
+// One linear route pass makes the forward flight continuously perceptible.
+const TUNNEL_ROUTE_DURATION = phases[6].start;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const PORTAL_NORMAL = new THREE.Vector3(0, 0, 1);
 
@@ -238,7 +239,8 @@ const FABRIC_START = 12;
 const FABRIC_END = 29;
 const FABRIC_COUNT = 24;
 const FABRIC_GATEWAY_COUNT = 6;
-const FABRIC_ROUTE_LENGTH = 68;
+const FABRIC_ROUTE_START = TUNNEL_PATH_LENGTH * FABRIC_START / TUNNEL_ROUTE_DURATION;
+const FABRIC_ROUTE_LENGTH = TUNNEL_PATH_LENGTH * (FABRIC_END - FABRIC_START) / TUNNEL_ROUTE_DURATION;
 const fabricMembranes = new THREE.Group();
 fabricMembranes.visible = false;
 scene.add(fabricMembranes);
@@ -378,7 +380,9 @@ function createFabricMembranes() {
     const radiusB = 4.9 + random() * .55;
     // Anchor cloth to the same spline as the camera and tunnel rings. The first
     // six sheets sit close together in the textile passage; the rest fill its depth.
-    const routeDistance = gateway ? 13 + index * 8 : 7 + random() * FABRIC_ROUTE_LENGTH;
+    const routeDistance = gateway
+      ? FABRIC_ROUTE_START + 5 + index * FABRIC_ROUTE_LENGTH / 8
+      : FABRIC_ROUTE_START + random() * FABRIC_ROUTE_LENGTH;
     const span = gateway ? 17 + random() * 8 : 8 + random() * 15;
     sampleTunnelFrame((routeDistance - span * .5) / TUNNEL_PATH_LENGTH, frameA);
     sampleTunnelFrame((routeDistance + span * .5) / TUNNEL_PATH_LENGTH, frameB);
@@ -505,7 +509,7 @@ let previousElapsed = 0;
 let yaw = 0, pitch = 0, targetYaw = 0, targetPitch = 0;
 let dragging = false, pointerX = 0, pointerY = 0, firstFrameRendered = false;
 let preludeRunning = false, preludeStartedAt = 0;
-let journeyRunning = false, journeyFinished = false, journeyStartedAt = 0, currentPhase = -1, drift = 0;
+let journeyRunning = false, journeyFinished = false, journeyStartedAt = 0, currentPhase = -1;
 let flashStartedAt = -99;
 let audioContext, masterGain, calmGain, distressGain, flatlineGain;
 let soundscapeCreated = false, birdTimer, playTimer;
@@ -669,7 +673,7 @@ function applyPhase(index, journeyTime) {
 }
 
 function resetExperience() {
-  preludeRunning = false; journeyRunning = false; journeyFinished = false; currentPhase = -1; drift = 0;
+  preludeRunning = false; journeyRunning = false; journeyFinished = false; currentPhase = -1;
   endScreen.hidden = true; startButton.hidden = false; startButton.textContent = "ENTER PARADISE";
   stageLabel.textContent = "00 / PARADISE";
   document.querySelector(".advisory").textContent = "10 SEC · SPATIAL BIRDSONG · ACCELERATION";
@@ -687,7 +691,7 @@ async function startJourney() {
 function beginTunnel(elapsed) {
   preludeRunning=false; paradise.visible=false; scene.background.setHex(0x172119);scene.fog.color.setHex(0x172119);scene.fog.density=.018;
   tunnel.visible=true;portal.visible=true;particles.visible=true;fabricMembranes.visible=false;whiteRoom.visible=false;camera.position.set(0,0,0);rig.rotation.set(0,0,0);tunnelMaterial.uniforms.uRadiusScale.value=1;portal.scale.set(1,1,1);updateTunnelFollower(0);
-  journeyRunning=true;journeyFinished=false;currentPhase=-1;drift=0;journeyStartedAt=elapsed;applyPhase(0,0);
+  journeyRunning=true;journeyFinished=false;currentPhase=-1;journeyStartedAt=elapsed;applyPhase(0,0);
 }
 function updateParadise(elapsed) {
   const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-4,PRELUDE_DURATION), surge=pull*pull*(3-2*pull), fade=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-2.8,PRELUDE_DURATION); sky.material.opacity=1-fade;
@@ -784,8 +788,9 @@ renderer.setAnimationLoop(() => {
       // Preserve the 3.5 m → 1.5 m corridor while the centreline itself stays fixed.
       tunnelMaterial.uniforms.uRadiusScale.value = Math.max(.24, scale);
       portal.scale.setScalar(Math.max(.055, scale * scale));
-      drift += delta * CLOCK_RATE * speed * 1.55;
-      updateTunnelFollower(drift / TUNNEL_TRAVEL_DISTANCE);
+      // Camera translation is independent of the panic-speed effects: it keeps
+      // advancing steadily along the centreline for a calm, unmistakable flight.
+      updateTunnelFollower(journeyTime / TUNNEL_ROUTE_DURATION);
       particles.rotation.z += delta * speed * (.015 + chaos * .11);
       particles.rotation.x = Math.sin(elapsed * (1 + chaos * 4)) * chaos * .16;
       particleMaterial.color.setRGB(THREE.MathUtils.lerp(.95, .95, distress), THREE.MathUtils.lerp(.81, .08, distress), THREE.MathUtils.lerp(.45, .15, distress));
