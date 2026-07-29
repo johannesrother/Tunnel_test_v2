@@ -150,7 +150,7 @@ const vertexShader = `
     float breathing=sin(uTime*.52+uv.y*15.)*.5+.5;
     float folded=sin(uv.y*(82.+uChaos*68.)+sin(uv.x*(13.+uChaos*21.))*2.2+uTime*(.22+uChaos*2.4));
     float organic=noise(vec3(position.x*.28+uTime*uChaos*.08,position.y*.09-uTime*(.025+uChaos*.18),position.z*.28));
-    float abrupt=sin(uv.y*34.-uTime*7.)*sin(uv.x*31.+uTime*4.3);
+    float abrupt=sin(uv.y*34.+uTime*7.)*sin(uv.x*31.+uTime*4.3);
     float displacement=folded*(.055+uChaos*.22)+(organic-.5)*(.58+uChaos*.7)+breathing*.045+abrupt*uChaos*.15;
     // Scale only away from the spline centre, never along the route itself.
     // The tunnel can narrow without pulling its curve away from the camera.
@@ -172,20 +172,21 @@ const fragmentShader = `
   float hash21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
   float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash21(i),hash21(i+vec2(1,0)),f.x),mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),f.x),f.y);}
   float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=noise2(p)*a;p=p*2.03+11.7;a*=.5;}return v;}
-  float vein(vec2 p,float s,float sp){float w=sin(p.y*s*.23-uTime*sp)*.12+sin(p.y*s*.41)*.23+sin(p.y*1.7+p.x*.8)*.11;return 1.-smoothstep(0.,.055,abs(sin((p.x+w)*s)));}
+  float vein(vec2 p,float s,float sp){float w=sin(p.y*s*.23+uTime*sp)*.12+sin(p.y*s*.41)*.23+sin(p.y*1.7+p.x*.8)*.11;return 1.-smoothstep(0.,.055,abs(sin((p.x+w)*s)));}
   void main(){
     vec2 p=vec2(vUv.x*6.28318,vUv.y*2.);
-    float tissue=fbm(vec2(vUv.x*(13.+uChaos*15.),vUv.y*(28.+uChaos*34.)-uTime*.05*uFlow));
+    // Detail flows toward the viewer, reinforcing the physical forward dolly move.
+    float tissue=fbm(vec2(vUv.x*(13.+uChaos*15.),vUv.y*(28.+uChaos*34.)+uTime*.05*uFlow));
     float fine=vein(p+vec2(tissue*.34,0),7.3+uChaos*7.,.33*uFlow);
     float branches=vein(p.yx+vec2(.7+tissue*.2,0),4.1+uChaos*5.,-.2*uFlow);
     float rings=pow(vRidge,11.);
-    float travel=sin(vUv.y*(96.+uChaos*110.)-uTime*.72*uFlow)*.5+.5;
+    float travel=sin(vUv.y*(96.+uChaos*110.)+uTime*.72*uFlow)*.5+.5;
     vec3 calm=mix(vec3(.07,.13,.08),vec3(.42,.52,.38),.32+tissue*.48);
     calm=mix(calm,vec3(.62,.78,.78),smoothstep(.42,.92,tissue)*.48);
     calm+=vec3(.88,.73,.38)*fine*(.075+tissue*.085)+vec3(.96,.93,.8)*branches*fine*.13+vec3(.96,.93,.8)*rings*(.08+travel*.14);
     vec3 dark=mix(vec3(.012,.008,.025),vec3(.16,.035,.09),tissue*.7+travel*.22);
     dark+=vec3(.42,.035,.06)*fine*(.12+uChaos*.28)+vec3(.75,.68,.62)*rings*uChaos*.18;
-    float cut=step(.82,sin(vUv.y*210.-uTime*(7.+uChaos*18.))*.5+.5)*uChaos;
+    float cut=step(.82,sin(vUv.y*210.+uTime*(7.+uChaos*18.))*.5+.5)*uChaos;
     vec3 color=mix(calm,dark,uDistress);
     color+=vec3(.42,.35,.39)*cut*uDistress*.28;
     color*=.82+smoothstep(-58.,38.,vDepth)*.28;
