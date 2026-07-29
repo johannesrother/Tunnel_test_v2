@@ -140,12 +140,13 @@ const particleMaterial = new THREE.PointsMaterial({ color: 0xf1cf72, size: .045,
 const particles = new THREE.Points(particleGeometry, particleMaterial);
 scene.add(particles);
 
-// Textile interlude (12–29 s): thin, tapered membranes are stretched between
-// neighbouring tunnel anchors.  Keeping both anchors on one side of the tunnel
-// leaves a reliable, collision-free corridor around the camera.
+// Textile interlude (12–29 s): broad, draped membranes are stretched between
+// tunnel anchors. Their pinched waists echo a tensile textile installation,
+// while the open centre remains a visual (and technical) camera corridor.
 const FABRIC_START = 12;
 const FABRIC_END = 29;
-const FABRIC_COUNT = 18;
+const FABRIC_COUNT = 24;
+const FABRIC_GATEWAY_COUNT = 6;
 const FABRIC_TRACK_LENGTH = 96;
 const fabricMembranes = new THREE.Group();
 fabricMembranes.visible = false;
@@ -161,6 +162,9 @@ const fabricMaterial = new THREE.ShaderMaterial({
     uOpacity: { value: .5 },
     uPhase: { value: 0 },
     uTwist: { value: 0 },
+    uGather: { value: 0 },
+    uWaist: { value: .5 },
+    uDrape: { value: 0 },
     uCalm: { value: 0 },
     uNervous: { value: 0 },
     uJolt: { value: 0 }
@@ -169,6 +173,9 @@ const fabricMaterial = new THREE.ShaderMaterial({
     uniform float uTime;
     uniform float uPhase;
     uniform float uTwist;
+    uniform float uGather;
+    uniform float uWaist;
+    uniform float uDrape;
     uniform float uCalm;
     uniform float uNervous;
     uniform float uJolt;
@@ -180,15 +187,21 @@ const fabricMaterial = new THREE.ShaderMaterial({
     void main(){
       vAlong=aAlong;
       vAcross=aAcross;
+      // A Gaussian gather pulls one part of the broad sheet into a taut waist.
+      float gathered=1.-uGather*exp(-pow((aAlong-uWaist)*5.6,2.));
       float breathing=sin(aAlong*6.28318+uTime*(.58+uCalm*.24)+uPhase)*(.10+.11*uCalm);
       float ripple=sin(aAlong*14.0-uTime*(.76+uNervous*1.8)+uPhase*2.7)*(.025+.15*uNervous);
       float fineWave=sin(aAlong*26.0+uTime*1.9+uPhase*4.0)*(.016+.052*uNervous);
       float jolt=sin(aAlong*25.0+uPhase*9.0+uTime*30.0)*uJolt*.23;
       float angle=(aAlong-.5)*uTwist+sin(aAlong*8.0+uTime*.7+uPhase)*uNervous*.12;
-      float bentDepth=breathing+ripple+fineWave+jolt;
+      // This shallow centre bow makes the planes read as hanging fabric, not flags.
+      float hanging=sin(aAlong*3.14159)*(1.-aAcross*aAcross)*uDrape;
+      float bentDepth=breathing+ripple+fineWave+jolt+hanging;
       float c=cos(angle), s=sin(angle);
-      vec2 twisted=mat2(c,-s,s,c)*vec2(position.x,bentDepth);
-      vec3 transformed=vec3(twisted.x,position.y+sin(aAlong*9.0+uTime*.55+uPhase)*(.025+.055*uCalm)+jolt*.12,twisted.y);
+      float billow=sin(aAlong*3.14159)*(1.-aAcross*aAcross)*uDrape*.24;
+      vec2 twisted=mat2(c,-s,s,c)*vec2(position.x*gathered+billow,bentDepth);
+      float sideways=sin(aAlong*3.14159+uPhase)*uDrape*.12;
+      vec3 transformed=vec3(twisted.x+sideways,position.y+sin(aAlong*9.0+uTime*.55+uPhase)*(.025+.055*uCalm)+jolt*.12,twisted.y);
       vLight=.78+.22*sin(aAlong*5.2+uPhase)*.5+.11*abs(aAcross);
       gl_Position=projectionMatrix*modelViewMatrix*vec4(transformed,1.);
     }
@@ -220,16 +233,17 @@ function seededRandom(seed) {
 }
 
 function createFabricGeometry(width) {
-  // A 3 × 9 grid is enough for soft curves, while sin(t) tapers it into points.
-  const alongSegments = 9;
-  const acrossSegments = 3;
+  // A 5 × 11 grid keeps the drape soft but is still only 72 vertices per membrane.
+  const alongSegments = 11;
+  const acrossSegments = 5;
   const positions = [];
   const alongValues = [];
   const acrossValues = [];
   const indices = [];
   for (let row = 0; row <= alongSegments; row += 1) {
     const along = row / alongSegments;
-    const taper = Math.pow(Math.sin(Math.PI * along), 1.15);
+    // Wide shoulders and true pointed ends create long, stretched textile silhouettes.
+    const taper = Math.pow(Math.sin(Math.PI * along), .46);
     for (let column = 0; column <= acrossSegments; column += 1) {
       const across = column / acrossSegments * 2 - 1;
       positions.push(across * width * taper, along - .5, 0);
@@ -256,22 +270,27 @@ function createFabricGeometry(width) {
 function createFabricMembranes() {
   const random = seededRandom(29012026);
   const localUp = new THREE.Vector3(0, 1, 0);
-  const entranceAnchors = [[2.75, .85], [5.25, .95], [3.75, 5.55], [1.3, 3.05]];
+  // The first six sheets form the recognizable room-scale installation. The
+  // remaining membranes progressively fill the tunnel without sealing it shut.
+  const gatewayAnchors = [
+    [2.62, .28], [3.36, 5.6], [5.14, 1.02],
+    [4.08, .18], [2.92, 5.84], [.92, 3.9]
+  ];
   for (let index = 0; index < FABRIC_COUNT; index += 1) {
-    const entrance = index < entranceAnchors.length;
-    const angleA = entrance ? entranceAnchors[index][0] : random() * Math.PI * 2;
-    // Adjacent anchors create diagonals and spirals without closing the centre.
-    const angleB = entrance ? entranceAnchors[index][1] : angleA + (random() < .5 ? -1 : 1) * (.52 + random() * 1.25);
+    const gateway = index < FABRIC_GATEWAY_COUNT;
+    const angleA = gateway ? gatewayAnchors[index][0] : random() * Math.PI * 2;
+    // Long diagonals and offset anchors produce an enveloping, but porous weave.
+    const angleB = gateway ? gatewayAnchors[index][1] : angleA + (random() < .5 ? -1 : 1) * (.74 + random() * 1.34);
     const radiusA = 4.9 + random() * .55;
     const radiusB = 4.9 + random() * .55;
-    // The first four anchor the entrance visibly; the remaining sheet positions
+    // The gateway sheets anchor the entrance visibly; the remaining sheet positions
     // are distributed through the looping tunnel track.
-    const zCenter = entrance ? -22 - index * 14 : -FABRIC_TRACK_LENGTH + random() * FABRIC_TRACK_LENGTH;
-    const zSpan = entrance ? 12 + random() * 8 : 5.5 + random() * 13.5;
+    const zCenter = gateway ? -17 - index * 14 : -FABRIC_TRACK_LENGTH + random() * FABRIC_TRACK_LENGTH;
+    const zSpan = gateway ? 17 + random() * 8 : 8 + random() * 15;
     const anchorA = new THREE.Vector3(Math.cos(angleA) * radiusA, Math.sin(angleA) * radiusA, zCenter - zSpan * .5);
     const anchorB = new THREE.Vector3(Math.cos(angleB) * radiusB, Math.sin(angleB) * radiusB, zCenter + zSpan * .5);
     const direction = anchorB.clone().sub(anchorA);
-    const mesh = new THREE.Mesh(createFabricGeometry(entrance ? .95 + random() * .32 : .68 + random() * .42), fabricMaterial);
+    const mesh = new THREE.Mesh(createFabricGeometry(gateway ? 1.42 + random() * .48 : .86 + random() * .58), fabricMaterial);
     mesh.position.copy(anchorA).add(anchorB).multiplyScalar(.5);
     mesh.quaternion.setFromUnitVectors(localUp, direction.clone().normalize());
     mesh.scale.y = direction.length();
@@ -280,10 +299,14 @@ function createFabricMembranes() {
     const data = {
       mesh,
       phase: random() * Math.PI * 2,
-      twist: .38 + random() * .42,
+      twist: .34 + random() * .52,
+      gather: gateway ? .52 + random() * .2 : .32 + random() * .36,
+      waist: .32 + random() * .36,
+      drape: gateway ? .62 + random() * .36 : .3 + random() * .5,
       trackOffset: zCenter + FABRIC_TRACK_LENGTH,
-      revealAt: index / (FABRIC_COUNT - 1) * .72,
-      opacity: entrance ? .84 + random() * .08 : .72 + random() * .12,
+      // A compact reveal curve makes a textile cluster rather than isolated flags.
+      revealAt: index / (FABRIC_COUNT - 1) * .52,
+      opacity: gateway ? .84 + random() * .1 : .72 + random() * .13,
       jolt: 0,
       nextJolt: 0
     };
@@ -293,6 +316,9 @@ function createFabricMembranes() {
       fabricMaterial.uniforms.uOpacity.value = data.currentOpacity;
       fabricMaterial.uniforms.uPhase.value = data.phase;
       fabricMaterial.uniforms.uTwist.value = data.twist * (1 + data.nervous * 1.9);
+      fabricMaterial.uniforms.uGather.value = data.gather;
+      fabricMaterial.uniforms.uWaist.value = data.waist;
+      fabricMaterial.uniforms.uDrape.value = data.drape;
       fabricMaterial.uniforms.uCalm.value = data.calm;
       fabricMaterial.uniforms.uNervous.value = data.nervous;
       fabricMaterial.uniforms.uJolt.value = data.jolt;
