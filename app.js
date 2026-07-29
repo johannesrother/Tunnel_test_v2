@@ -464,14 +464,17 @@ const cameraFrame = createTunnelFrame();
 const portalFrame = createTunnelFrame();
 const cameraLookAhead = new THREE.Vector3();
 const portalFacing = new THREE.Vector3();
+const viewerLookMatrix = new THREE.Matrix4();
 
 function moveViewerAlongTunnel(routeProgress) {
   const progress = THREE.MathUtils.clamp(routeProgress, 0, .998);
   sampleTunnelFrame(progress, cameraFrame);
   tunnelPath.getPointAt(Math.min(progress + .0035, 1), cameraLookAhead);
   viewerDolly.position.copy(cameraFrame.center);
-  viewerDolly.up.copy(WORLD_UP);
-  viewerDolly.lookAt(cameraLookAhead);
+  // Matrix4.lookAt uses the camera convention: the local -Z axis points into
+  // the direction of travel. Object3D.lookAt would flip a non-camera dolly.
+  viewerLookMatrix.lookAt(cameraFrame.center, cameraLookAhead, WORLD_UP);
+  viewerDolly.quaternion.setFromRotationMatrix(viewerLookMatrix);
 
   // The portal stays ahead on the same centreline and faces back along its tangent.
   sampleTunnelFrame(Math.min(progress + .36, .998), portalFrame);
