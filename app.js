@@ -154,6 +154,7 @@ scene.add(fabricMembranes);
 const fabricMaterial = new THREE.ShaderMaterial({
   transparent: true,
   depthWrite: false,
+  depthTest: false,
   side: THREE.DoubleSide,
   uniforms: {
     uTime: { value: 0 },
@@ -201,9 +202,9 @@ const fabricMaterial = new THREE.ShaderMaterial({
     void main(){
       float tip=smoothstep(.0,.105,vAlong)*(1.-smoothstep(.895,1.,vAlong));
       float edge=1.-smoothstep(.62,1.,abs(vAcross));
-      float weave=.94+.06*sin(vAlong*58.+vAcross*9.);
-      vec3 textile=mix(vec3(.74,.77,.80),vec3(.99,1.,1.),clamp(vLight,0.,1.))*weave;
-      gl_FragColor=vec4(textile,uOpacity*tip*(.78+.22*edge));
+      float weave=.97+.03*sin(vAlong*58.+vAcross*9.);
+      vec3 textile=mix(vec3(.93,.95,.97),vec3(1.),clamp(vLight,0.,1.))*weave;
+      gl_FragColor=vec4(textile,uOpacity*tip*(.92+.08*edge));
     }
   `
 });
@@ -228,7 +229,7 @@ function createFabricGeometry(width) {
   const indices = [];
   for (let row = 0; row <= alongSegments; row += 1) {
     const along = row / alongSegments;
-    const taper = Math.pow(Math.sin(Math.PI * along), .62);
+    const taper = Math.pow(Math.sin(Math.PI * along), 1.15);
     for (let column = 0; column <= acrossSegments; column += 1) {
       const across = column / acrossSegments * 2 - 1;
       positions.push(across * width * taper, along - .5, 0);
@@ -255,22 +256,26 @@ function createFabricGeometry(width) {
 function createFabricMembranes() {
   const random = seededRandom(29012026);
   const localUp = new THREE.Vector3(0, 1, 0);
+  const entranceAnchors = [[2.75, .85], [5.25, .95], [3.75, 5.55], [1.3, 3.05]];
   for (let index = 0; index < FABRIC_COUNT; index += 1) {
-    const angleA = random() * Math.PI * 2;
+    const entrance = index < entranceAnchors.length;
+    const angleA = entrance ? entranceAnchors[index][0] : random() * Math.PI * 2;
     // Adjacent anchors create diagonals and spirals without closing the centre.
-    const angleB = angleA + (random() < .5 ? -1 : 1) * (.24 + random() * .88);
+    const angleB = entrance ? entranceAnchors[index][1] : angleA + (random() < .5 ? -1 : 1) * (.52 + random() * 1.25);
     const radiusA = 4.9 + random() * .55;
     const radiusB = 4.9 + random() * .55;
-    const zCenter = -FABRIC_TRACK_LENGTH + random() * FABRIC_TRACK_LENGTH;
-    const zSpan = 5.5 + random() * 13.5;
+    // The first four anchor the entrance visibly; the remaining sheet positions
+    // are distributed through the looping tunnel track.
+    const zCenter = entrance ? -22 - index * 14 : -FABRIC_TRACK_LENGTH + random() * FABRIC_TRACK_LENGTH;
+    const zSpan = entrance ? 12 + random() * 8 : 5.5 + random() * 13.5;
     const anchorA = new THREE.Vector3(Math.cos(angleA) * radiusA, Math.sin(angleA) * radiusA, zCenter - zSpan * .5);
     const anchorB = new THREE.Vector3(Math.cos(angleB) * radiusB, Math.sin(angleB) * radiusB, zCenter + zSpan * .5);
     const direction = anchorB.clone().sub(anchorA);
-    const mesh = new THREE.Mesh(createFabricGeometry(.34 + random() * .28), fabricMaterial);
+    const mesh = new THREE.Mesh(createFabricGeometry(entrance ? .95 + random() * .32 : .68 + random() * .42), fabricMaterial);
     mesh.position.copy(anchorA).add(anchorB).multiplyScalar(.5);
     mesh.quaternion.setFromUnitVectors(localUp, direction.clone().normalize());
     mesh.scale.y = direction.length();
-    mesh.renderOrder = 3;
+    mesh.renderOrder = 6;
 
     const data = {
       mesh,
@@ -278,7 +283,7 @@ function createFabricMembranes() {
       twist: .38 + random() * .42,
       trackOffset: zCenter + FABRIC_TRACK_LENGTH,
       revealAt: index / (FABRIC_COUNT - 1) * .72,
-      opacity: .50 + random() * .13,
+      opacity: entrance ? .84 + random() * .08 : .72 + random() * .12,
       jolt: 0,
       nextJolt: 0
     };
@@ -306,16 +311,16 @@ function updateFabricMembranes(journeyTime, elapsed, delta, tunnelScale, driftDi
   if (!active) return;
 
   const progress = THREE.MathUtils.clamp((journeyTime - FABRIC_START) / (FABRIC_END - FABRIC_START), 0, 1);
-  const fadeIn = THREE.MathUtils.smoothstep(0, .06, progress);
-  const fadeOut = 1 - THREE.MathUtils.smoothstep(.9, 1, progress);
-  const nervous = THREE.MathUtils.smoothstep(.34, .96, progress);
+  const fadeIn = THREE.MathUtils.smoothstep(progress, 0, .06);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, .9, 1);
+  const nervous = THREE.MathUtils.smoothstep(progress, .34, .96);
   // Follow the existing narrowing tunnel only in its radial dimensions.
   fabricMembranes.scale.set(tunnelScale, tunnelScale, 1);
   fabricMaterial.uniforms.uTime.value = elapsed;
 
   fabricMembranes.children.forEach((mesh) => {
     const data = mesh.userData.fabric;
-    const reveal = THREE.MathUtils.smoothstep(data.revealAt, data.revealAt + .16, progress);
+    const reveal = THREE.MathUtils.smoothstep(progress, data.revealAt, data.revealAt + .16);
     mesh.visible = reveal > .01;
     // The reset occurs behind the camera, so the endless textile track never pops in view.
     mesh.position.z = -FABRIC_TRACK_LENGTH + positiveModulo(data.trackOffset + driftDistance * 1.15, FABRIC_TRACK_LENGTH);
