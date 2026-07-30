@@ -23,10 +23,18 @@ const phases = [
   { start: 50, label: "06 / CRAWL", distress: 0.92, chaos: 0.82, scale: 0.18, speed: 3.7 },
   { start: 55, label: "07 / WHITE ROOM", distress: 0, chaos: 0, scale: 1, speed: 0 }
 ];
+// Every change is allowed to overlap the next state.  This avoids discrete
+// visual and audio cuts, especially when the experience is running in WebXR.
+const PHASE_BLEND_DURATION = 2.2;
+const WHITE_ROOM_FADE_START = phases[6].start - 2.3;
+const WHITE_ROOM_FADE_END = phases[6].start + .45;
+const PARADISE_COLOR = new THREE.Color(0x91d9ff);
+const TUNNEL_COLOR = new THREE.Color(0x172119);
+const WHITE_ROOM_COLOR = new THREE.Color(0xffffff);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x172119);
-scene.fog = new THREE.FogExp2(0x172119, 0.018);
+scene.background = PARADISE_COLOR.clone();
+scene.fog = new THREE.FogExp2(PARADISE_COLOR.clone(), 0.012);
 
 const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 150);
 camera.position.set(0, 0, 11);
@@ -168,6 +176,7 @@ const fragmentShader = `
   uniform float uDistress;
   uniform float uChaos;
   uniform float uFlash;
+  uniform float uSceneOpacity;
   varying vec2 vUv;varying float vRidge;varying float vDepth;
   float hash21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
   float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash21(i),hash21(i+vec2(1,0)),f.x),mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),f.x),f.y);}
@@ -191,15 +200,18 @@ const fragmentShader = `
     color+=vec3(.42,.35,.39)*cut*uDistress*.28;
     color*=.82+smoothstep(-58.,38.,vDepth)*.28;
     color=mix(color,vec3(1.),clamp(uFlash,0.,1.));
-    gl_FragColor=vec4(color,1.);
+    gl_FragColor=vec4(color,uSceneOpacity);
   }
 `;
 
 const tunnelMaterial = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
   side: THREE.BackSide,
   uniforms: {
     uTime: { value: 0 }, uFlow: { value: phases[0].speed }, uDistress: { value: 0 },
-    uChaos: { value: 0 }, uFlash: { value: 0 }, uRadiusScale: { value: 1 }
+    uChaos: { value: 0 }, uFlash: { value: 0 }, uRadiusScale: { value: 1 },
+    uSceneOpacity: { value: 0 }
   },
   vertexShader, fragmentShader
 });
@@ -244,7 +256,9 @@ const FABRIC_GATEWAY_COUNT = 6;
 const FABRIC_ROUTE_START = TUNNEL_PATH_LENGTH * FABRIC_START / TUNNEL_ROUTE_DURATION;
 const FABRIC_ROUTE_LENGTH = TUNNEL_PATH_LENGTH * (FABRIC_END - FABRIC_START) / TUNNEL_ROUTE_DURATION;
 const fabricMembranes = new THREE.Group();
-fabricMembranes.visible = false;
+// Start transparent rather than hidden so the inexpensive textile shader is
+// compiled while the visitor is still in paradise, not at second 12.
+fabricMembranes.visible = true;
 scene.add(fabricMembranes);
 
 const fabricMaterial = new THREE.ShaderMaterial({
@@ -411,6 +425,9 @@ function createFabricMembranes() {
       // A compact reveal curve makes a textile cluster rather than isolated flags.
       revealAt: index / (FABRIC_COUNT - 1) * .52,
       opacity: gateway ? .84 + random() * .1 : .72 + random() * .13,
+      currentOpacity: 0,
+      calm: 1,
+      nervous: 0,
       jolt: 0,
       nextJolt: 0
     };
@@ -432,19 +449,21 @@ function createFabricMembranes() {
 }
 
 function updateFabricMembranes(journeyTime, elapsed, delta, tunnelScale) {
-  const active = journeyTime >= FABRIC_START && journeyTime < FABRIC_END;
+  // Let the passage emerge before 12 s and dissolve after 29 s.  Keeping the
+  // meshes alive during the fade prevents a one-frame pop in either direction.
+  const active = journeyTime >= FABRIC_START - 1.1 && journeyTime <= FABRIC_END + .5;
   fabricMembranes.visible = active;
   if (!active) return;
 
   const progress = THREE.MathUtils.clamp((journeyTime - FABRIC_START) / (FABRIC_END - FABRIC_START), 0, 1);
-  const fadeIn = THREE.MathUtils.smoothstep(progress, 0, .06);
-  const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, .9, 1);
+  const fadeIn = THREE.MathUtils.smootherstep(journeyTime, FABRIC_START - 1.1, FABRIC_START + 1.15);
+  const fadeOut = 1 - THREE.MathUtils.smootherstep(journeyTime, FABRIC_END - 1.65, FABRIC_END + .5);
   const nervous = THREE.MathUtils.smoothstep(progress, .34, .96);
   fabricMaterial.uniforms.uTime.value = elapsed;
 
   fabricMembranes.children.forEach((mesh) => {
     const data = mesh.userData.fabric;
-    const reveal = THREE.MathUtils.smoothstep(progress, data.revealAt, data.revealAt + .16);
+    const reveal = THREE.MathUtils.smootherstep(progress, data.revealAt, data.revealAt + .16);
     mesh.visible = reveal > .01;
     // Narrow locally with the corridor without scaling the spline positions.
     mesh.scale.x = Math.max(.38, tunnelScale);
@@ -466,6 +485,17 @@ const portalFrame = createTunnelFrame();
 const cameraLookAhead = new THREE.Vector3();
 const portalFacing = new THREE.Vector3();
 const viewerLookMatrix = new THREE.Matrix4();
+const routeStartFrame = createTunnelFrame();
+const routeStartPosition = new THREE.Vector3();
+const routeStartLookAt = new THREE.Vector3();
+const routeStartQuaternion = new THREE.Quaternion();
+const preludeStartPosition = new THREE.Vector3();
+const preludeStartQuaternion = new THREE.Quaternion();
+sampleTunnelFrame(0, routeStartFrame);
+routeStartPosition.copy(routeStartFrame.center);
+tunnelPath.getPointAt(.0035, routeStartLookAt);
+viewerLookMatrix.lookAt(routeStartPosition, routeStartLookAt, WORLD_UP);
+routeStartQuaternion.setFromRotationMatrix(viewerLookMatrix);
 
 function moveViewerAlongTunnel(routeProgress) {
   const progress = THREE.MathUtils.clamp(routeProgress, 0, .998);
@@ -484,10 +514,11 @@ function moveViewerAlongTunnel(routeProgress) {
   portal.quaternion.setFromUnitVectors(PORTAL_NORMAL, portalFacing);
 }
 
-const whiteRoomMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide });
+const whiteRoomMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide, transparent: true, opacity: 0, depthWrite: false });
 const whiteRoom = new THREE.Mesh(new THREE.SphereGeometry(42, 32, 20), whiteRoomMaterial);
 whiteRoom.position.copy(tunnelPath.getPointAt(1));
-whiteRoom.visible = false;
+// Warm this simple material before it is needed for the final cross-fade.
+whiteRoom.visible = true;
 scene.add(whiteRoom);
 
 const paradise = new THREE.Group();
@@ -508,6 +539,36 @@ const warmLight = new THREE.DirectionalLight(0xffe8af, 2.5); warmLight.position.
 const birds = new THREE.Group(); const birdFlights = [];
 function addBird(x,y,z,size,speed){const bird=new THREE.Group(),mat=new THREE.LineBasicMaterial({color:0x173f2a});bird.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-size,0,0),new THREE.Vector3(0,size*.35,0)]),mat),new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,size*.35,0),new THREE.Vector3(size,0,0)]),mat));bird.position.set(x,y,z);birds.add(bird);birdFlights.push({bird,x,y,speed,phase:Math.random()*Math.PI*2});}
 addBird(-5,8,-20,.72,.9);addBird(4,10,-28,.52,1.2);addBird(13,7,-24,.44,.75);paradise.add(birds);paradise.children.forEach((child)=>{if(child!==sky)child.visible=false;});paradise.visible=true;scene.add(paradise);
+
+let tunnelSceneOpacity = 0;
+let whiteRoomBlend = 0;
+
+// One place controls the overlap of the three worlds.  Geometry remains in
+// the renderer at zero alpha so shader compilation cannot interrupt a change.
+function setSceneBlend(intro, white) {
+  const introBlend = THREE.MathUtils.clamp(intro, 0, 1);
+  whiteRoomBlend = THREE.MathUtils.clamp(white, 0, 1);
+  tunnelSceneOpacity = introBlend * (1 - whiteRoomBlend);
+
+  tunnel.visible = true;
+  portal.visible = true;
+  particles.visible = true;
+  whiteRoom.visible = true;
+  paradise.visible = introBlend < .9995;
+  sky.material.opacity = 1 - introBlend;
+  tunnelMaterial.uniforms.uSceneOpacity.value = tunnelSceneOpacity;
+  particleMaterial.opacity = .48 * tunnelSceneOpacity;
+  whiteRoomMaterial.opacity = whiteRoomBlend;
+
+  scene.background.copy(PARADISE_COLOR).lerp(TUNNEL_COLOR, introBlend).lerp(WHITE_ROOM_COLOR, whiteRoomBlend);
+  scene.fog.color.copy(scene.background);
+  scene.fog.density = THREE.MathUtils.lerp(
+    THREE.MathUtils.lerp(.012, .018, introBlend),
+    .002,
+    whiteRoomBlend
+  );
+  document.body.classList.toggle("is-white-room", whiteRoomBlend > .96);
+}
 
 const clock = new THREE.Clock();
 let previousElapsed = 0;
@@ -619,12 +680,12 @@ function playImpact(intensity) {
   const gain = audioContext.createGain();
   oscillator.type = intensity > .7 ? "sawtooth" : "sine";
   oscillator.frequency.setValueAtTime(950 + intensity * 650, now);
-  oscillator.frequency.exponentialRampToValueAtTime(70, now + .32);
+  oscillator.frequency.exponentialRampToValueAtTime(70, now + .52);
   gain.gain.setValueAtTime(.0001, now);
-  gain.gain.exponentialRampToValueAtTime(.08 + intensity * .12, now + .008);
-  gain.gain.exponentialRampToValueAtTime(.0001, now + .38);
+  gain.gain.exponentialRampToValueAtTime(.025 + intensity * .045, now + .06);
+  gain.gain.exponentialRampToValueAtTime(.0001, now + .58);
   oscillator.connect(gain).connect(masterGain);
-  oscillator.start(now); oscillator.stop(now + .4);
+  oscillator.start(now); oscillator.stop(now + .6);
 }
 
 function setAudioPhase(index) {
@@ -637,14 +698,14 @@ function setAudioPhase(index) {
   distressGain.gain.setValueAtTime(Math.max(distressGain.gain.value, .0001), now);
   flatlineGain.gain.setValueAtTime(Math.max(flatlineGain.gain.value, .0001), now);
   if (index === 6) {
-    calmGain.gain.exponentialRampToValueAtTime(.0001, now + .18);
-    distressGain.gain.exponentialRampToValueAtTime(.0001, now + .18);
-    flatlineGain.gain.exponentialRampToValueAtTime(1, now + .12);
+    calmGain.gain.exponentialRampToValueAtTime(.0001, now + 1.25);
+    distressGain.gain.exponentialRampToValueAtTime(.0001, now + 1.25);
+    flatlineGain.gain.exponentialRampToValueAtTime(1, now + 1.1);
   } else {
     const level = index / 5;
-    calmGain.gain.exponentialRampToValueAtTime(Math.max(.0001, 1 - level * .98), now + .8);
-    distressGain.gain.exponentialRampToValueAtTime(Math.max(.0001, level), now + .8);
-    flatlineGain.gain.exponentialRampToValueAtTime(.0001, now + .12);
+    calmGain.gain.exponentialRampToValueAtTime(Math.max(.0001, 1 - level * .98), now + 1.25);
+    distressGain.gain.exponentialRampToValueAtTime(Math.max(.0001, level), now + 1.25);
+    flatlineGain.gain.exponentialRampToValueAtTime(.0001, now + .75);
   }
 }
 
@@ -661,7 +722,7 @@ function applyPhase(index, journeyTime) {
   const phase = phases[index];
   stageLabel.textContent = phase.label;
   flashStartedAt = journeyTime;
-  if (index > 0) playImpact(index / 6);
+  if (index > 0 && index < 6) playImpact(index / 6);
   setAudioPhase(index);
   currentPhase = index;
   if (index === 0) {
@@ -669,12 +730,6 @@ function applyPhase(index, journeyTime) {
     birdTimer = window.setTimeout(playBirdPhrase, 450);
     playTimer = window.setTimeout(playDistantTone, 1800);
   }
-  paradise.visible = false;
-  const white = index === 6;
-  tunnel.visible = !white; portal.visible = !white; particles.visible = !white; whiteRoom.visible = white;
-  document.body.classList.toggle("is-white-room", white);
-  scene.background.setHex(white ? 0xffffff : 0x172119);
-  scene.fog.color.setHex(white ? 0xffffff : 0x172119);
 }
 
 function resetExperience() {
@@ -683,8 +738,12 @@ function resetExperience() {
   stageLabel.textContent = "00 / PARADISE";
   document.querySelector(".advisory").textContent = "10 SEC · SPATIAL BIRDSONG · ACCELERATION";
   document.body.classList.remove("is-running", "is-white-room");
-  paradise.visible = true; tunnel.visible = false; portal.visible = false; particles.visible = false; fabricMembranes.visible = false; whiteRoom.visible = false;
-  scene.background.setHex(0x91d9ff); scene.fog.color.setHex(0x91d9ff); scene.fog.density = .012; camera.position.set(0,0,11); viewerDolly.position.set(0,0,0); viewerDolly.quaternion.identity(); rig.rotation.set(0,0,0); tunnelMaterial.uniforms.uRadiusScale.value = 1; paradise.position.set(0,0,0); paradise.rotation.set(0,0,0); sky.material.opacity = 1;
+  camera.position.set(0,0,11); viewerDolly.position.set(0,0,0); viewerDolly.quaternion.identity(); rig.rotation.set(0,0,0); tunnelMaterial.uniforms.uRadiusScale.value = 1; paradise.position.set(0,0,0); paradise.rotation.set(0,0,0);
+  tunnelMaterial.uniforms.uDistress.value = 0; tunnelMaterial.uniforms.uChaos.value = 0; tunnelMaterial.uniforms.uFlow.value = phases[0].speed;
+  portalMaterial.uniforms.uDistress.value = 0; portal.scale.setScalar(1);
+  fabricMembranes.visible = true;
+  fabricMembranes.children.forEach((mesh) => { mesh.visible = true; mesh.userData.fabric.currentOpacity = 0; mesh.userData.fabric.jolt = 0; });
+  setSceneBlend(0, 0);
   if (audioContext) { const now=audioContext.currentTime; masterGain.gain.cancelScheduledValues(now); masterGain.gain.exponentialRampToValueAtTime(.0001,now+.25); }
 }
 async function startJourney() {
@@ -694,15 +753,40 @@ async function startJourney() {
   window.clearTimeout(birdTimer); window.clearTimeout(playTimer); birdTimer=window.setTimeout(playBirdPhrase,160); playTimer=window.setTimeout(playDistantTone,1000);
 }
 function beginTunnel(elapsed) {
-  preludeRunning=false; paradise.visible=false; scene.background.setHex(0x172119);scene.fog.color.setHex(0x172119);scene.fog.density=.018;
-  tunnel.visible=true;portal.visible=true;particles.visible=true;fabricMembranes.visible=false;whiteRoom.visible=false;camera.position.set(0,0,0);rig.rotation.set(0,0,0);tunnelMaterial.uniforms.uRadiusScale.value=1;portal.scale.set(1,1,1);viewerDistance=0;moveViewerAlongTunnel(0);
+  // The prelude already reaches this exact position and orientation.  Do not
+  // reset the camera here: that former reset was the visible first-transition
+  // hitch between the valley and the tunnel.
+  preludeRunning=false;
+  camera.position.set(0,0,0);
+  viewerDolly.position.copy(routeStartPosition);
+  viewerDolly.quaternion.copy(routeStartQuaternion);
+  rig.rotation.set(0,0,0);
+  tunnelMaterial.uniforms.uRadiusScale.value=1;
+  portal.scale.set(1,1,1);
+  viewerDistance=0;
+  setSceneBlend(1, 0);
   journeyRunning=true;journeyFinished=false;currentPhase=-1;journeyStartedAt=elapsed;applyPhase(0,0);
 }
 function updateParadise(elapsed) {
-  const t=elapsed-preludeStartedAt, pull=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-4,PRELUDE_DURATION), surge=pull*pull*(3-2*pull), fade=THREE.MathUtils.smootherstep(t,PRELUDE_DURATION-2.8,PRELUDE_DURATION); sky.material.opacity=1-fade;
-  camera.position.z=11-surge*21;camera.position.y=Math.sin(t*.45)*.12*(1-pull);
+  const t=elapsed-preludeStartedAt;
+  // All timing is expressed relative to PRELUDE_DURATION, so the accelerated
+  // test mode exercises the same curve as the normal ten-second introduction.
+  const normalized=THREE.MathUtils.clamp(t/PRELUDE_DURATION,0,1);
+  const pull=THREE.MathUtils.smootherstep(normalized,.27,1);
+  const tunnelFade=THREE.MathUtils.smootherstep(normalized,.38,1);
+  const surge=pull*pull*(3-2*pull);
+  viewerDolly.position.lerpVectors(preludeStartPosition,routeStartPosition,surge);
+  viewerDolly.quaternion.copy(preludeStartQuaternion).slerp(routeStartQuaternion,surge);
+  // Parent and camera move in concert: camera world-space Z evolves continuously
+  // from the valley (+11 m) to the first spline point (-10 m).
+  camera.position.z=11*(1-surge);camera.position.y=Math.sin(t*.45)*.12*(1-pull);
+  setSceneBlend(tunnelFade,0);
   birdFlights.forEach(f=>{f.bird.position.x=f.x+Math.sin(t*f.speed+f.phase)*4;f.bird.position.y=f.y+Math.sin(t*f.speed*2+f.phase)*.7;f.bird.rotation.z=Math.sin(t*f.speed*2+f.phase)*.28;});
-  if(pull>0){tunnel.visible=true;portal.visible=true;particles.visible=true;tunnelMaterial.uniforms.uRadiusScale.value=.035+surge*.965;portal.scale.setScalar(.025+surge*.975);sampleTunnelFrame(.36,portalFrame);portal.position.copy(portalFrame.center);portalFacing.copy(portalFrame.tangent).negate();portal.quaternion.setFromUnitVectors(PORTAL_NORMAL,portalFacing);tunnelMaterial.uniforms.uDistress.value=surge*.2;tunnelMaterial.uniforms.uChaos.value=surge*.12;tunnelMaterial.uniforms.uFlow.value=.4+surge*4.4;particles.rotation.z+=surge*.045;paradise.position.z=surge*18;paradise.rotation.y=Math.sin(t*.4)*.025*(1-pull);}
+  tunnelMaterial.uniforms.uRadiusScale.value=.035+surge*.965;
+  portal.scale.setScalar(.025+surge*.975);
+  sampleTunnelFrame(.36,portalFrame);portal.position.copy(portalFrame.center);portalFacing.copy(portalFrame.tangent).negate();portal.quaternion.setFromUnitVectors(PORTAL_NORMAL,portalFacing);
+  tunnelMaterial.uniforms.uDistress.value=surge*.2;tunnelMaterial.uniforms.uChaos.value=surge*.12;tunnelMaterial.uniforms.uFlow.value=.4+surge*4.4;
+  particles.rotation.z+=surge*.045;paradise.position.z=surge*18;paradise.rotation.y=Math.sin(t*.4)*.025*(1-pull);
   if(t>=PRELUDE_DURATION) beginTunnel(elapsed);
 }
 
@@ -781,11 +865,23 @@ renderer.setAnimationLoop(() => {
       if (nextIndex !== currentPhase) applyPhase(nextIndex, journeyTime);
       phase = phases[nextIndex];
       const next = phases[Math.min(nextIndex + 1, phases.length - 1)];
-      const transition = nextIndex === phases.length - 1 ? 0 : THREE.MathUtils.smoothstep(journeyTime, next.start - 1.15, next.start);
+      const transition = nextIndex === phases.length - 1 ? 0 : THREE.MathUtils.smootherstep(
+        journeyTime,
+        next.start - PHASE_BLEND_DURATION,
+        next.start
+      );
       const distress = THREE.MathUtils.lerp(phase.distress, next.distress, transition);
       const chaos = THREE.MathUtils.lerp(phase.chaos, next.chaos, transition);
       const scale = THREE.MathUtils.lerp(phase.scale, next.scale, transition);
       const speed = THREE.MathUtils.lerp(phase.speed, next.speed, transition);
+      // The final room overlaps the last tunnel phase.  Nothing is hidden or
+      // swapped at second 55; the white space gently takes over instead.
+      const whiteBlend = THREE.MathUtils.smootherstep(
+        journeyTime,
+        WHITE_ROOM_FADE_START,
+        WHITE_ROOM_FADE_END
+      );
+      setSceneBlend(1, whiteBlend);
       tunnelMaterial.uniforms.uDistress.value = distress;
       tunnelMaterial.uniforms.uChaos.value = chaos;
       tunnelMaterial.uniforms.uFlow.value = speed;
@@ -808,12 +904,12 @@ renderer.setAnimationLoop(() => {
   }
 
   const flashAge = journeyTime - flashStartedAt;
-  const flash = journeyRunning && currentPhase > 0 && currentPhase < 6 && flashAge >= 0 && flashAge < .65
-    ? Math.max(0, 1 - flashAge / .65) * (currentPhase < 3 ? .88 : 1) : 0;
+  const flash = journeyRunning && currentPhase > 0 && currentPhase < 6 && flashAge >= 0 && flashAge < .9
+    ? THREE.MathUtils.smootherstep(flashAge, 0, .1) * (1 - THREE.MathUtils.smootherstep(flashAge, .18, .9)) * (currentPhase < 3 ? .1 : .16) : 0;
   tunnelMaterial.uniforms.uFlash.value = flash;
   flashLayer.style.opacity = renderer.xr.isPresenting ? "0" : String(flash);
   tunnelMaterial.uniforms.uTime.value = elapsed + journeyTime * .08;
-  portalMaterial.uniforms.uOpacity.value = .78 + Math.sin(elapsed * .38) * .05;
+  portalMaterial.uniforms.uOpacity.value = (.78 + Math.sin(elapsed * .38) * .05) * tunnelSceneOpacity;
   renderer.render(scene, camera);
   if (!firstFrameRendered) { firstFrameRendered = true; bootMessage.hidden = true; }
 });
