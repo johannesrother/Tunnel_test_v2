@@ -45,13 +45,12 @@
       <p class="instruction">drag to look · the path is set</p>
       <p id="status" class="status" role="status" aria-live="polite"></p>
       <div id="flash-layer" class="flash-layer" aria-hidden="true"></div>
-      <section id="end-screen" class="end-screen" hidden>
-        <p>THE END</p>
-        <button id="restart-button" type="button">RESTART</button>
+      <section id="end-screen" class="end-screen" hidden aria-hidden="true">
+        <button id="restart-button" type="button" aria-label="Restart journey"></button>
       </section>
     </main>
 
     <noscript>JavaScript wird für diese WebXR-Demo benötigt.</noscript>
-    <script type="module" src="./app.js?v=27"></script>
+    <script type="module" src="./app.js?v=28"></script>
   </body>
 </html>
