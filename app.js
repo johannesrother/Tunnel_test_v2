@@ -798,7 +798,7 @@ function enterFinalWhite() {
   if (finalWhiteActivated) return;
   finalWhiteActivated = true;
   endScreen.hidden = true;
-  finalHudElements.forEach((element) => { element.hidden = true; });
+  finalHudElements.forEach((element) => { element.hidden = true; element.style.display = "none"; });
   if (!audioContext || whiteRoomAudioStarted) return;
   whiteRoomAudioStarted = true;
   const now = audioContext.currentTime;
@@ -842,7 +842,7 @@ function resetExperience() {
   stageLabel.textContent = "00 / PARADISE";
   document.querySelector(".advisory").textContent = "10 SEC · SPATIAL BIRDSONG · ACCELERATION";
   document.body.classList.remove("is-running", "is-white-room");
-  finalHudElements.forEach((element) => { element.hidden = false; });
+  finalHudElements.forEach((element) => { element.hidden = false; element.style.display = ""; });
   camera.position.set(0,0,11); viewerDolly.position.set(0,0,0); viewerDolly.quaternion.identity(); rig.rotation.set(0,0,0); tunnelMaterial.uniforms.uRadiusScale.value = 1; paradise.position.set(0,0,0); paradise.rotation.set(0,0,0);
   tunnelMaterial.uniforms.uDistress.value = 0; tunnelMaterial.uniforms.uChaos.value = 0; tunnelMaterial.uniforms.uFlow.value = phases[0].speed;
   portalMaterial.uniforms.uDistress.value = 0; portal.scale.setScalar(1);
